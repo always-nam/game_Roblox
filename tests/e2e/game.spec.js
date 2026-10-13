@@ -227,6 +227,45 @@ test('세워 든 상태(85°)에서 앞으로 젖히기·핸들 돌리기로 1�
   await expect(page.locator('#dlg-title')).toHaveText('완벽해요!');
 });
 
+test('[요청] 대각선으로 한 번 기울이면 두 방향으로 흘러가 1단계가 풀린다', async ({ page, isMobile }) => {
+  test.skip(!isMobile, '휴대폰 전용');
+  await startMotion(page);
+  const base = posture(60);
+  await hold(page, base, 450);
+  await hold(page, turn(turn(base, 'x', 11), 'y', 11), 1500);   // 아래·오른쪽 대각선으로 기울인 채 유지
+  await waitIdle(page);
+  await expect(page.locator('#dlg-title')).toHaveText('완벽해요!');
+});
+
+test('[요청] 정중앙으로 돌아오지 않고 아래 → 오른쪽으로 바로 옮겨도 이어서 움직인다', async ({ page, isMobile }) => {
+  test.skip(!isMobile, '휴대폰 전용');
+  await startMotion(page);
+  const base = posture(60);
+  await hold(page, base, 450);
+  await hold(page, turn(base, 'x', 16), 500);                   // 아래
+  await hold(page, turn(turn(base, 'x', 10), 'y', 16), 800);    // 아래를 조금 남긴 채 오른쪽으로
+  await waitIdle(page);
+  await expect(page.locator('#dlg-title')).toHaveText('완벽해요!');
+});
+
+test('되돌리기 직후에는 판을 수평으로 돌릴 때까지 다시 움직이지 않는다', async ({ page, isMobile }) => {
+  test.skip(!isMobile, '휴대폰 전용');
+  await startMotion(page);
+  const base = posture(60);
+  await hold(page, base, 450);
+  const down = turn(base, 'x', 16);
+  await hold(page, down, 300);
+  await waitIdle(page);
+  await expect(page.locator('#hud-moves')).toHaveText('1');
+  await page.locator('#btn-undo').click();
+  await hold(page, down, 400);                                  // 아직 기울인 채: 다시 움직이지 않음
+  await expect(page.locator('#hud-moves')).toHaveText('0');
+  await hold(page, base, 200);                                  // 수평으로
+  await hold(page, down, 300);
+  await waitIdle(page);
+  await expect(page.locator('#hud-moves')).toHaveText('1');
+});
+
 test('기울인 채 있으면 한 번만 움직인다', async ({ page, isMobile }) => {
   test.skip(!isMobile, '휴대폰 전용');
   await startMotion(page);

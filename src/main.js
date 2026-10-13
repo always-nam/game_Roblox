@@ -125,6 +125,8 @@ function startLevel(def) {
   updateHud();
   // 단계 시작은 항상 사용자의 탭에서 일어나므로, 권한이 필요한 전체 화면·센서도 여기서 요청할 수 있다
   if (progress.full && fullscreenSupported() && !fullscreenElement()) enterFullscreen();
+  motion.last = null;
+  motion.paused = false;
   if (motion.on) motion.detector.calibrate();
   else if (motion.supported && progress.motion) enableMotion(false);
 }
@@ -193,22 +195,26 @@ function updateHud() {
 }
 
 // ---------- 조작 ----------
-function doTilt(dir) {
-  if (game.ended || $('#game').hidden) return;
-  if (game.animating) { game.queued = dir; return; }
+// silent: 움직일 게 없을 때 흔들림 표시 없이 false만 돌려준다(기울기 흐름 조작용)
+function doTilt(dir, { silent = false } = {}) {
+  if (game.ended || $('#game').hidden) return false;
+  if (game.animating) { if (!silent) game.queued = dir; return false; }
   const r = tilt(game.level, game.state, dir);
   const frame = $('#frame');
   if (!r.changed) {
+    if (silent) return false;
     frame.classList.remove('shake');
     void frame.offsetWidth;
     frame.classList.add('shake');
-    return;
+    return false;
   }
+  motion.last = dir;
   game.history.push(game.state);
   game.state = r.state;
   game.moves++;
   updateHud();
   animateMoves(r.moves, dir);
+  return true;
 }
 
 function animateMoves(moves, dir) {
@@ -249,6 +255,8 @@ function animateMoves(moves, dir) {
 
 function undo() {
   if (game.animating || !game.history.length) return;
+  motion.last = null;
+  motion.paused = motion.on;
   game.state = game.history.pop();
   game.moves = Math.max(0, game.moves - 1);
   game.ended = false;
@@ -259,6 +267,8 @@ function undo() {
 
 function restart() {
   if (game.animating) return;
+  motion.last = null;
+  motion.paused = motion.on;
   game.state = cloneState(game.initial);
   game.history = [];
   game.moves = 0;
@@ -375,6 +385,8 @@ const motion = {
   detector: createTiltDetector({ on: SENSITIVITY[progress.sens] }),
   gotEvent: false,
   watchdog: 0,
+  last: null,      // 마지막에 적용한 방향(같은 방향은 다시 적용해도 변화가 없으므로 건너뛴다)
+  paused: false,
 };
 
 function screenAngle() {
@@ -400,7 +412,6 @@ function updateMeter(r) {
   const k = (v) => Math.max(-1.25, Math.min(1.25, v / motion.detector.threshold)) * METER_R;
   m.style.setProperty('--mx', `${k(r.x).toFixed(1)}px`);
   m.style.setProperty('--my', `${k(r.y).toFixed(1)}px`);
-  m.classList.toggle('waiting', r.state === 'fired');
   m.classList.toggle('calib', r.state === 'calib');
 }
 
@@ -427,7 +438,21 @@ function onOrientation(e) {
     frame.style.setProperty('--rx', `${-clamp(r.y)}deg`);
     frame.style.setProperty('--ry', `${clamp(r.x)}deg`);
   }
-  if (r.dir && $('#overlay').hidden) doTilt(r.dir);
+  if ($('#overlay').hidden) motionStep(r);
+}
+
+// 흐름 조작: 지금 기울어진 방향 중 마지막에 적용한 방향이 아닌 것을 적용한다(움직일 게 있을 때만).
+// 대각선이면 두 방향이 번갈아 적용되어 더 움직이지 않을 때까지 굴러간다.
+function motionStep(r) {
+  if (game.animating || game.ended || $('#game').hidden) return;
+  if (motion.paused) {                 // 되돌리기·처음부터 직후: 판을 수평으로 돌릴 때까지 대기
+    if (r.dirs.length) return;
+    motion.paused = false;
+  }
+  for (const dir of r.dirs) {
+    if (dir === motion.last) continue;
+    if (doTilt(dir, { silent: true })) return;
+  }
 }
 
 async function enableMotion(fromButton) {
@@ -452,7 +477,7 @@ async function enableMotion(fromButton) {
   setMotionButton();
   if (fromButton) { progress.motion = true; saveProgress(); }
   updateMeter({ x: 0, y: 0, state: 'calib' });
-  flashHint('휴대폰을 편하게 든 채 잠깐 멈추면 그 자세가 수평 기준이 됩니다. 그다음 기울이면 구슬이 굴러갑니다.');
+  flashHint('휴대폰을 편하게 든 채 잠깐 멈추면 그 자세가 수평 기준이 됩니다. 그다음 기울이는 쪽으로 구슬이 흘러가고, 대각선으로 기울이면 두 방향으로 흘러갑니다.');
   clearTimeout(motion.watchdog);
   motion.watchdog = setTimeout(() => {
     if (motion.on && !motion.gotEvent) {

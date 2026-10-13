@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   eulerToMatrix, matrixToEuler, mul, axisRotation, tiltIntent, toScreen, dominant,
-  createTiltDetector, SENSITIVITY,
+  createTiltDetector, SENSITIVITY, activeDirs, nextDirs,
 } from '../../src/motion.js';
 
 const close = (a, b, eps = 0.5) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
@@ -12,20 +12,19 @@ const posture = (pitch, alpha = 30) => eulerToMatrix(alpha, pitch, 0);
 const turn = (R, axis, deg) => mul(R, axisRotation(axis, deg));
 const euler = (R) => matrixToEuler(R);   // [alpha, beta, gamma]
 
-/** 감지기에 한 자세를 ms 동안 60Hz로 넣는다. 나온 방향들을 돌려준다 */
+/** 감지기에 한 자세를 ms 동안 60Hz로 넣고, 마지막 결과의 기울어진 방향들을 돌려준다 */
 function hold(det, R, ms, clock, angle = 0) {
   const [a, b, g] = euler(R);
-  const dirs = [];
+  let r;
   for (let t = 0; t < ms; t += 16) {
     clock.t += 16;
-    const r = det.feed(b, g, angle, a, clock.t);
-    if (r.dir) dirs.push(r.dir);
+    r = det.feed(b, g, angle, a, clock.t);
   }
-  return dirs;
+  return r.dirs;
 }
 function ready(det, R, clock, angle = 0) {
   hold(det, R, 400, clock, angle);
-  assert.equal(det.state, 'armed');
+  assert.equal(det.state, 'ready');
 }
 
 test('각도 ↔ 행렬 변환이 서로 맞는다', () => {
@@ -106,50 +105,56 @@ test('[실기기 사례] 버튼을 누르는 순간 흔들려도 그 자세를 �
   hold(det, jolt, 60, clock);                    // 잠깐(60ms)
   assert.equal(det.state, 'calib');
   assert.deepEqual(hold(det, natural, 400, clock), []);   // 멈추면 그 자세가 기준
-  assert.equal(det.state, 'armed');
+  assert.equal(det.state, 'ready');
   assert.deepEqual(hold(det, turn(natural, 'y', 14), 50, clock), ['right']);
 });
 
-test('기울였다 돌아오면 다시 입력을 받고, 네 방향 모두 동작한다', () => {
+test('네 방향 모두 기울인 동안 계속 그 방향으로 잡힌다', () => {
   const det = createTiltDetector();
   const clock = { t: 0 };
   const base = posture(63);
   ready(det, base, clock);
   for (const [axis, deg, want] of [['x', 15, 'down'], ['x', -15, 'up'], ['y', 15, 'right'], ['y', -15, 'left']]) {
-    assert.deepEqual(hold(det, turn(base, axis, deg), 100, clock), [want], want);
-    assert.deepEqual(hold(det, base, 150, clock), []);
-    assert.equal(det.state, 'armed');
+    assert.deepEqual(hold(det, turn(base, axis, deg), 1500, clock), [want], want);   // 오래 기울여도 유지
   }
 });
 
-test('기울인 채 있으면 한 번만 입력된다', () => {
+test('[요청] 대각선으로 기울이면 두 방향이 모두 잡힌다 (센 쪽부터)', () => {
   const det = createTiltDetector();
   const clock = { t: 0 };
   const base = posture(50);
   ready(det, base, clock);
-  assert.deepEqual(hold(det, turn(base, 'y', 20), 1000, clock), ['right']);
+  // 아래로 11°, 오른쪽으로 8°: 각 방향은 12°에 못 미치지만 합친 기울기가 넘으므로 둘 다 인정
+  const diag = turn(turn(base, 'x', 11), 'y', 8);
+  assert.deepEqual(hold(det, diag, 100, clock), ['down', 'right']);
 });
 
-test('기울인 채 오래 멈추면 그 자세가 새 기준이 되고, 돌아오는 동작은 입력으로 치지 않는다', () => {
-  const det = createTiltDetector();
-  const clock = { t: 0 };
-  const base = posture(50);
-  ready(det, base, clock);
-  const tilted = turn(base, 'y', 20);
-  assert.deepEqual(hold(det, tilted, 1500, clock), ['right']);
-  assert.equal(det.state, 'armed');
-  assert.deepEqual(hold(det, base, 1000, clock), []);         // 원래 자세로 복귀: 왼쪽 입력 없음
-  assert.deepEqual(hold(det, turn(base, 'y', -15), 100, clock), ['left']);   // 그다음 진짜 왼쪽
+test('대각선 판정: 전체 크기가 기준을 넘고, 성분이 그 절반 이상이면 그 방향도 포함', () => {
+  assert.deepEqual(activeDirs({ x: 9, y: 9 }, 12), ['right', 'down']);      // 45°: 둘 다
+  assert.deepEqual(activeDirs({ x: -14, y: 4 }, 12), ['left']);            // 거의 왼쪽: 한 방향
+  assert.deepEqual(activeDirs({ x: 6, y: 6 }, 12), []);                    // 전체 8.5° < 12°
+  assert.deepEqual(activeDirs({ x: 0, y: -20 }, 12), ['up']);
 });
 
-test('기준 근처에서 멈추면 기준이 지금 자세로 다시 맞춰진다', () => {
+test('[요청] 정중앙으로 돌아오지 않아도 다른 방향으로 옮기면 그 방향이 다음 후보가 된다', () => {
+  // 아래를 적용한 뒤(last=down) 그대로 오른쪽으로 옮겨 대각선을 거치는 경우
+  assert.deepEqual(nextDirs({ x: 3, y: 15 }, 'down', 12), []);              // 아직 아래만: 이미 적용됨
+  assert.deepEqual(nextDirs({ x: 10, y: 12 }, 'down', 12), ['right']);      // 대각선 구간: 오른쪽
+  assert.deepEqual(nextDirs({ x: 15, y: 2 }, 'down', 12), ['right']);
+  assert.deepEqual(nextDirs({ x: 15, y: 2 }, 'right', 12), []);
+  assert.deepEqual(nextDirs({ x: 10, y: 12 }, null, 12), ['down', 'right']);
+});
+
+test('기준 근처에서 멈추면 기준이 지금 자세로 다시 맞춰지고, 기울인 채 멈춰도 기준은 그대로', () => {
   const det = createTiltDetector();
   const clock = { t: 0 };
   const base = posture(40);
   ready(det, base, clock);
-  const drifted = turn(base, 'x', 8);                         // 8° 숙인 채로 편하게 들고 있음
+  const drifted = turn(base, 'x', 5);                         // 5° 숙인 채로 편하게 들고 있음
   hold(det, drifted, 900, clock);
-  assert.deepEqual(hold(det, turn(drifted, 'x', -12), 50, clock), ['up']);   // 새 기준에서 12°
+  assert.deepEqual(hold(det, turn(drifted, 'x', -12.5), 50, clock), ['up']);   // 새 기준에서 12.5°
+  hold(det, drifted, 900, clock);
+  assert.deepEqual(hold(det, turn(drifted, 'y', 20), 2000, clock), ['right']); // 기울인 채 2초: 계속 오른쪽
 });
 
 test('감도: 둔하게 18° · 보통 12° · 민감 8°', () => {
@@ -159,7 +164,6 @@ test('감도: 둔하게 18° · 보통 12° · 민감 8°', () => {
     const base = posture(45);
     ready(det, base, clock);
     assert.deepEqual(hold(det, turn(base, 'y', deg - 1.5), 50, clock), [], `${level} 미만`);
-    hold(det, base, 100, clock);
     assert.deepEqual(hold(det, turn(base, 'y', deg + 1), 50, clock), ['right'], `${level} 이상`);
   }
 });
@@ -168,16 +172,16 @@ test('나침반 값(alpha)이 없어도 앞뒤·좌우가 동작한다', () => {
   const det = createTiltDetector();
   let t = 0;
   for (let i = 0; i < 30; i++) det.feed(45, 0, 0, null, (t += 16));
-  assert.equal(det.state, 'armed');
-  assert.equal(det.feed(45, 16, 0, null, (t += 16)).dir, 'right');
+  assert.equal(det.state, 'ready');
+  assert.deepEqual(det.feed(45, 16, 0, null, (t += 16)).dirs, ['right']);
 });
 
 test('잘못된 값은 무시하고, 화면이 회전하면 기준을 다시 잡는다', () => {
   const det = createTiltDetector();
   const clock = { t: 0 };
   ready(det, posture(30), clock);
-  assert.equal(det.feed(null, 5).dir, null);
-  assert.equal(det.feed(NaN, 5).dir, null);
+  assert.deepEqual(det.feed(null, 5).dirs, []);
+  assert.deepEqual(det.feed(NaN, 5).dirs, []);
   hold(det, posture(30), 50, clock, 90);
   assert.equal(det.state, 'calib');
 });

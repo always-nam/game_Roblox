@@ -6,14 +6,17 @@
 // 2. 기울기는 기준 자세에서 '기기 자신의 축으로 얼마나 돌렸는지'로 잰다. 중력 투영으로 재면
 //    휴대폰을 세워 들었을 때 좌우 기울기가 절반 이하로 줄어든다(63° 들고 15° 기울이면 6.7°).
 //      앞뒤 = 기기 가로축(x) 회전, 좌우 = 기기 세로축(y) 회전 + 세워 들었을 때의 핸들 돌리기(z)
-// 3. 기준 근처에서 멈춰 있으면 그 자세로 기준을 다시 맞춘다(자세가 바뀌어도 계속 동작).
-//    기울인 채 오래 멈추면 그 자세를 새 기준으로 삼고, 돌아오는 동작은 반대 입력으로 치지 않는다.
+// 3. '흐름' 방식: 판은 지금 기울어진 방향으로 계속 흐른다. 정중앙으로 돌아올 필요가 없다.
+//    같은 방향으로 두 번 기울여도 이 게임에서는 아무것도 바뀌지 않으므로(이미 끝까지 굴러감),
+//    마지막에 적용한 방향과 '다른' 기울어진 방향만 적용하면 된다. 대각선이면 두 방향을 번갈아
+//    적용해 더 움직이지 않을 때까지 굴러간다(실제 판을 대각선으로 기울인 것과 같은 결과).
+// 4. 기준 근처에서 멈춰 있으면 그 자세로 기준을 다시 맞춘다(자세가 바뀌어도 계속 동작).
 
 export const SENSITIVITY = { low: 18, normal: 12, high: 8 };   // 입력으로 인정하는 기울기(도)
 export const REST_SPEED = 25;     // 이보다 느리게 움직이면(도/초) 멈춘 것으로 본다
 export const CALIB_MS = 300;      // 처음 기준: 이만큼 멈추면 잡는다
 export const RECENTER_MS = 700;   // 기준 근처에서 이만큼 멈추면 기준을 다시 맞춘다
-export const HOLD_MS = 1200;      // 기울인 채 이만큼 멈추면 그 자세를 새 기준으로
+export const AXIS_SHARE = 0.5;    // 대각선: 전체 기울기가 기준을 넘으면, 그 절반 이상인 방향 성분도 인정
 
 const RAD = Math.PI / 180;
 const DEG = 180 / Math.PI;
@@ -93,29 +96,42 @@ export function dominant({ x, y }) {
   return { dir: y >= 0 ? 'down' : 'up', mag: Math.abs(y) };
 }
 
-const OPPOSITE = { up: 'down', down: 'up', left: 'right', right: 'left' };
-const along = (dir, d) => ({ right: d.x, left: -d.x, down: d.y, up: -d.y }[dir]);
+/**
+ * 지금 기울기에서 '기울어진' 방향들 (센 쪽부터). 전체 크기가 on 이상이어야 하고,
+ * 각 축 성분이 on × AXIS_SHARE 이상이면 그 방향도 포함한다(대각선 = 두 방향).
+ */
+export function activeDirs({ x, y }, on) {
+  if (Math.hypot(x, y) < on) return [];
+  const comps = [[x >= 0 ? 'right' : 'left', Math.abs(x)], [y >= 0 ? 'down' : 'up', Math.abs(y)]]
+    .filter(([, v]) => v >= on * AXIS_SHARE)
+    .sort((a, b) => b[1] - a[1]);
+  return comps.map(([d]) => d);
+}
+
+/** 적용할 방향 후보: 기울어진 방향 중 마지막에 적용한 방향은 빼고(이미 끝까지 굴러간 상태), 센 쪽부터 */
+export function nextDirs(d, last, on) {
+  return activeDirs(d, on).filter((dir) => dir !== last);
+}
 
 /**
- * 기울기 감지기. feed(beta, gamma, angle, alpha, t)에 센서 값을 넣으면 기울이기가 확정될 때 방향을 돌려준다.
- * 반환: { dir, x, y, state } — state: 'calib'(기준 잡는 중) | 'armed'(입력 대기) | 'fired'(되돌아오기 대기)
+ * 기울기 감지기. feed(beta, gamma, angle, alpha, t) → { x, y, dirs, state }
+ *  - x, y : 기준 대비 화면 기준 기울기(도)
+ *  - dirs : 지금 기울어진 방향들(센 쪽부터). 무엇을 적용할지는 게임 쪽에서 nextDirs로 고른다.
+ *  - state: 'calib'(기준 잡는 중) | 'ready'
  */
-export function createTiltDetector({ on = SENSITIVITY.normal, off = on * 0.45 } = {}) {
+export function createTiltDetector({ on = SENSITIVITY.normal } = {}) {
   let state = 'calib';
   let base = null;
   let baseAngle = 0;
   let prev = null;
   let restSince = null;
-  let lastDir = null;
-  let guard = null;
-  let guardMoved = false;   // 막아 둔 반대 방향: 한 번 움직였다가 다시 멈춰야 풀린다
   return {
     get state() { return state; },
     get base() { return base; },
     get threshold() { return on; },
-    calibrate() { state = 'calib'; base = null; restSince = null; guard = null; lastDir = null; prev = null; },
+    calibrate() { state = 'calib'; base = null; restSince = null; prev = null; },
     feed(beta, gamma, angle = 0, alpha = 0, t = Date.now()) {
-      const idle = { dir: null, x: 0, y: 0, state };
+      const idle = { x: 0, y: 0, dirs: [], state };
       if (beta == null || gamma == null || Number.isNaN(beta) || Number.isNaN(gamma)) return idle;
       const R = eulerToMatrix(alpha == null || Number.isNaN(alpha) ? 0 : alpha, beta, gamma);
 
@@ -123,7 +139,7 @@ export function createTiltDetector({ on = SENSITIVITY.normal, off = on * 0.45 } 
       if (prev) {
         const speed = rotationAngle(prev.R, R) / Math.max(1, t - prev.t) * 1000;
         if (speed < REST_SPEED) restSince ??= prev.t;
-        else { restSince = null; guardMoved = true; }
+        else restSince = null;
       } else {
         restSince = t;
       }
@@ -132,36 +148,17 @@ export function createTiltDetector({ on = SENSITIVITY.normal, off = on * 0.45 } 
 
       if (base && angle !== baseAngle) { state = 'calib'; base = null; restSince = t; restFor = 0; }
       if (state === 'calib') {
-        if (restFor >= CALIB_MS) { base = R; baseAngle = angle; state = 'armed'; guard = null; }
-        return { dir: null, x: 0, y: 0, state };
+        if (restFor >= CALIB_MS) { base = R; baseAngle = angle; state = 'ready'; }
+        return { x: 0, y: 0, dirs: [], state };
       }
 
       const d = tiltIntent(base, R, angle);
-      const { dir, mag } = dominant(d);
-      if (state === 'armed') {
-        if (mag >= on && dir !== guard) {
-          state = 'fired';
-          lastDir = dir;
-          guard = null;
-          return { dir, ...d, state };
-        }
-        if (restFor >= RECENTER_MS) {                // 멈춰 있으면 지금 자세로 기준 재설정
-          base = R;
-          restSince = t;
-          if (guardMoved) guard = null;
-        }
-      } else if (state === 'fired') {
-        if (along(lastDir, d) <= off) {
-          state = 'armed';
-        } else if (restFor >= HOLD_MS) {
-          base = R;                       // 기울인 채 멈춤 → 그 자세가 새 기준
-          restSince = t;
-          state = 'armed';
-          guard = OPPOSITE[lastDir];      // 원래 자세로 돌아오는 동작은 반대 입력으로 치지 않는다
-          guardMoved = false;
-        }
+      // 기준 근처(입력 각도의 절반 이내)에서 멈춰 있으면 지금 자세로 기준을 다시 맞춘다
+      if (restFor >= RECENTER_MS && Math.hypot(d.x, d.y) < on * 0.5) {
+        base = R;
+        restSince = t;
       }
-      return { dir: null, ...d, state };
+      return { ...d, dirs: activeDirs(d, on), state };
     },
   };
 }
