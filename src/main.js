@@ -2,7 +2,7 @@
 import { parseLevel, tilt, status, starsFor, cloneState } from './engine.js';
 import { LEVELS } from './levels.js';
 import { generatePuzzle, dateSeed } from './generator.js';
-import { createTiltDetector, TILT_ON } from './motion.js';
+import { createTiltDetector, SENSITIVITY } from './motion.js';
 
 const $ = (sel) => document.querySelector(sel);
 const STORE_KEY = 'tilt-marble-v1';
@@ -16,9 +16,9 @@ function loadProgress() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     const data = raw ? JSON.parse(raw) : {};
-    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full };
+    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full, sens: SENSITIVITY[data.sens] ? data.sens : 'normal' };
   } catch {
-    return { best: {}, daily: {}, last: 0, motion: false, full: false };
+    return { best: {}, daily: {}, last: 0, motion: false, full: false, sens: 'normal' };
   }
 }
 function saveProgress() {
@@ -372,7 +372,7 @@ const debugOn = location.hash === '#debug';   // 주소 끝에 #debug를 붙이�
 const motion = {
   supported: 'DeviceOrientationEvent' in window && (navigator.maxTouchPoints > 0 || window.matchMedia?.('(pointer: coarse)').matches),
   on: false,
-  detector: createTiltDetector(),
+  detector: createTiltDetector({ on: SENSITIVITY[progress.sens] }),
   gotEvent: false,
   watchdog: 0,
 };
@@ -387,17 +387,21 @@ function setMotionButton() {
   b.hidden = !motion.supported;
   b.setAttribute('aria-pressed', String(motion.on));
   $('#meter').hidden = !motion.on;
+  $('#sens').hidden = !motion.on;
   $('#debug').hidden = !(debugOn && motion.on);
+  document.querySelectorAll('#sens button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.sens === progress.sens)));
 }
 
 // 수평계: 점이 고리(입력 기준 각도) 밖으로 나가면 그 방향으로 기울어진다. 회색이면 되돌아오기를 기다리는 중.
+// 상태: 고리가 깜빡이면 기준을 잡는 중(잠깐 멈추세요), 점이 회색이면 되돌아오기를 기다리는 중.
 const METER_R = 13;
 function updateMeter(r) {
   const m = $('#meter');
-  const k = (v) => Math.max(-1.25, Math.min(1.25, v / TILT_ON)) * METER_R;
+  const k = (v) => Math.max(-1.25, Math.min(1.25, v / motion.detector.threshold)) * METER_R;
   m.style.setProperty('--mx', `${k(r.x).toFixed(1)}px`);
   m.style.setProperty('--my', `${k(r.y).toFixed(1)}px`);
-  m.classList.toggle('waiting', !r.armed);
+  m.classList.toggle('waiting', r.state === 'fired');
+  m.classList.toggle('calib', r.state === 'calib');
 }
 
 function flashHint(text) {
@@ -410,10 +414,11 @@ function onOrientation(e) {
   if (e.beta == null || e.gamma == null) return;
   motion.gotEvent = true;
   const angle = screenAngle();
-  const r = motion.detector.feed(e.beta, e.gamma, angle);
+  const r = motion.detector.feed(e.beta, e.gamma, angle, e.alpha, performance.now());
   updateMeter(r);
   if (debugOn) {
-    $('#debug').textContent = `beta ${e.beta.toFixed(1)} · gamma ${e.gamma.toFixed(1)} · 화면 ${angle}° → x ${r.x.toFixed(1)} y ${r.y.toFixed(1)}${r.dir ? ` ▶ ${r.dir}` : ''}`;
+    const f = (v) => (v == null ? '-' : v.toFixed(1));
+    $('#debug').textContent = `α ${f(e.alpha)} β ${f(e.beta)} γ ${f(e.gamma)} · 화면 ${angle}° → x ${f(r.x)} y ${f(r.y)} · ${r.state}${r.dir ? ` ▶ ${r.dir}` : ''}`;
   }
   const frame = $('#frame');
   if (!game.animating && !$('#game').hidden) {
@@ -446,7 +451,8 @@ async function enableMotion(fromButton) {
   window.addEventListener('deviceorientation', onOrientation);
   setMotionButton();
   if (fromButton) { progress.motion = true; saveProgress(); }
-  flashHint('휴대폰을 기울여 보세요. 지금 각도가 수평 기준입니다. 오른쪽 위 수평계의 점이 고리 밖으로 나가면 기울어집니다.');
+  updateMeter({ x: 0, y: 0, state: 'calib' });
+  flashHint('휴대폰을 편하게 든 채 잠깐 멈추면 그 자세가 수평 기준이 됩니다. 그다음 기울이면 구슬이 굴러갑니다.');
   clearTimeout(motion.watchdog);
   motion.watchdog = setTimeout(() => {
     if (motion.on && !motion.gotEvent) {
@@ -471,9 +477,17 @@ function disableMotion(fromButton) {
 $('#btn-motion').addEventListener('click', () => (motion.on ? disableMotion(true) : enableMotion(true)));
 $('#meter').addEventListener('click', () => {
   motion.detector.calibrate();
-  updateMeter({ x: 0, y: 0, armed: true });
-  flashHint('지금 각도를 수평 기준으로 다시 잡았습니다.');
+  updateMeter({ x: 0, y: 0, state: 'calib' });
+  flashHint('수평 기준을 다시 잡습니다. 편한 자세로 잠깐 멈춰 주세요.');
 });
+document.querySelectorAll('#sens button').forEach((b) => b.addEventListener('click', () => {
+  progress.sens = b.dataset.sens;
+  saveProgress();
+  motion.detector = createTiltDetector({ on: SENSITIVITY[progress.sens] });
+  updateMeter({ x: 0, y: 0, state: 'calib' });
+  setMotionButton();
+  flashHint(`감도: ${b.textContent} (${SENSITIVITY[progress.sens]}° 기울이면 입력). 잠깐 멈추면 기준을 다시 잡습니다.`);
+}));
 setMotionButton();
 
 // ---------- 전체 화면 ----------
