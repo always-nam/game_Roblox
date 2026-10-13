@@ -83,7 +83,7 @@ export function composePhrase(name, phrase = 0) {
 // ---------- 연주 ----------
 const mf = (m) => 440 * Math.pow(2, (m - 69) / 12);
 const music = { on: true, want: null, track: null, gain: null, timer: 0, next: 0, step: 0, phrase: 0, events: [], ei: 0, notes: 0 };
-export const MUSIC_VOLUME = 0.22;
+export const MUSIC_VOLUME = 0.11;   // 효과음이 묻히지 않게 낮게(이전 0.22의 절반)
 
 export function setMusicEnabled(on) {
   music.on = !!on;

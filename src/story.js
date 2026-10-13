@@ -37,10 +37,10 @@ export const CHAPTERS = [
   {
     no: 2,
     title: '여름 대청마루',
-    place: '대청마루 · 여름 저녁',
+    place: '대청마루 · 여름 한낮',
     scene: 'summer',
     intro: [
-      { who: 'narr', text: '해가 기울고 매미 소리가 잦아들 무렵, 마당에 반딧불이 하나둘 떠올랐다.' },
+      { who: 'narr', text: '매미 소리 가득한 한낮, 마당 위로 민들레 씨앗이 둥실둥실 날아다녔다.' },
       { who: 'grandma', text: '대청마루 밑을 봐라. 할아버지가 거기다 뭘 넣어 두는 걸 봤거든.' },
       { who: 'haru', text: '찾았다! 이번 판들은 더 커요. 구멍도 많고요.' },
       { who: 'grandma', text: '할아버지가 늘 그러셨지. 막힌 길은 돌아가면 되고, 구덩이는 돌로 메우면 된다고.' },
@@ -58,7 +58,7 @@ export const CHAPTERS = [
   {
     no: 3,
     title: '가을 장터',
-    place: '장터 · 가을 해 질 녘',
+    place: '장터 · 가을 오후',
     scene: 'autumn',
     intro: [
       { who: 'narr', text: '단풍이 붉게 물든 장날, 골목마다 등불이 걸렸다.' },
@@ -79,10 +79,10 @@ export const CHAPTERS = [
   {
     no: 4,
     title: '겨울 공방',
-    place: '공방 · 첫눈 오는 밤',
+    place: '공방 · 눈 오는 날',
     scene: 'winter',
     intro: [
-      { who: 'narr', text: '첫눈이 내린 밤, 하루는 할머니와 함께 공방 문을 열었다.' },
+      { who: 'narr', text: '첫눈이 소복이 쌓인 날, 하루는 할머니와 함께 공방 문을 열었다.' },
       { who: 'grandma', text: '할아버지 냄새가 그대로구나. 난로에 불부터 지피자.' },
       { who: 'haru', text: '판에 색깔 문이 달려 있어요. 같은 색 구슬만 지나갈 수 있나 봐요.' },
       { who: 'grandma', text: '할아버지 솜씨지. 자, 마지막 판까지 가 보렴.' },
