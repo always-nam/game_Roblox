@@ -21,5 +21,7 @@ export default defineConfig({
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },
     { name: 'mobile', use: { ...devices['Pixel 7'] } },
+    // 갤럭시 Z 폴드 펼친 화면(내부 화면 약 1812×2176px, 배율 2.625 → CSS 약 690×829)
+    { name: 'fold-open', use: { ...devices['Pixel 7'], viewport: { width: 690, height: 829 }, screen: { width: 690, height: 829 }, deviceScaleFactor: 2.625 } },
   ],
 });

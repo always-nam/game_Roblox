@@ -1,4 +1,5 @@
-/* 레이아웃: 한 화면 앱 — 위 HUD, 가운데 나무 테두리 퍼즐판, 아래 조작부. 넓은 화면에서도 세로 한 열.
+/* 레이아웃: 한 화면 앱 — 판을 화면에 꽉 차게. 세로 화면은 위 HUD·가운데 판·아래 조작부,
+   가로·정사각형에 가까운 넓은 화면(폴드 펼침, 태블릿, PC)은 왼쪽 판·오른쪽 조작부.
    의도적으로 한 가지(어두운 호두나무 장난감) 분위기만 사용한다. */
 :root {
   --bg: #1c1510;          /* 저녁 조명 아래 호두나무 책상 */
@@ -42,10 +43,9 @@ button { font: inherit; color: inherit; }
 
 .app {
   height: 100%;
-  max-width: 560px;
   margin: 0 auto;
-  padding-inline: 16px;
-  padding-block: 12px;
+  padding-inline: max(12px, env(safe-area-inset-left, 0px)) max(12px, env(safe-area-inset-right, 0px));
+  padding-block: max(10px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
 }
@@ -53,7 +53,7 @@ button { font: inherit; color: inherit; }
 .screen[hidden] { display: none !important; }
 
 /* ---------- 메뉴 ---------- */
-.menu { gap: 18px; overflow-y: auto; padding-bottom: 12px; }
+.menu { gap: 18px; overflow-y: auto; padding-bottom: 12px; width: 100%; max-width: 560px; margin-inline: auto; padding-inline: 4px; }
 .menu-head { padding-top: 8px; }
 .eyebrow {
   margin: 0;
@@ -149,8 +149,21 @@ button { font: inherit; color: inherit; }
 .icon-btn svg, .pad svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ---------- 게임 화면 ---------- */
-.game { gap: 10px; }
-.hud { display: flex; align-items: center; gap: 12px; }
+.game {
+  display: grid;
+  grid-template-areas: "hud" "board" "hint" "controls";
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+.game[hidden] { display: none !important; }
+.hud { grid-area: hud; }
+.board-area { grid-area: board; }
+.hint { grid-area: hint; }
+.debug { grid-area: hint; align-self: end; margin: 0; font: 11px/1.3 var(--font-num); color: var(--muted); text-align: center; }
+.controls { grid-area: controls; }
+.hud { display: flex; align-items: center; gap: 10px; }
 .hud-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .hud-num { font: 600 11px/1.2 var(--font-num); letter-spacing: .12em; color: var(--brass); }
 .hud-name { font: 400 22px/1.2 var(--font-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -160,8 +173,8 @@ button { font: inherit; color: inherit; }
 .hud-stats dd { margin: 0; font: 600 22px/1.1 var(--font-num); font-variant-numeric: tabular-nums; }
 
 .board-area {
-  flex: 1;
   min-height: 0;
+  min-width: 0;
   display: grid;
   place-items: center;
   touch-action: none;
@@ -258,10 +271,12 @@ button { font: inherit; color: inherit; }
 .piece.sink::before { transform: scale(.35); opacity: 0; }
 .piece.drop::before { transform: scale(.1) rotate(40deg); opacity: 0; transition-duration: .35s; }
 
-.hint { margin: 0; min-height: 3em; text-align: center; color: var(--muted); font-size: 14px; text-wrap: balance; }
+.hint { margin: 0; min-height: 2.6em; text-align: center; color: var(--muted); font-size: 14px; line-height: 1.3; text-wrap: balance; }
 
-.controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: env(safe-area-inset-bottom, 0px); }
-.tools { display: flex; flex-direction: column; gap: 8px; flex: 1; max-width: 180px; }
+.controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; max-width: 560px; justify-self: center; }
+.tools { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: 1; max-width: 260px; }
+.tools .btn { padding-inline: 8px; }
+.tools .btn-motion { grid-column: 1 / -1; }
 .dpad {
   display: grid;
   grid-template-columns: repeat(3, 48px);
@@ -313,9 +328,57 @@ button { font: inherit; color: inherit; }
 .dialog.lost h2 { color: var(--danger); }
 .dlg-actions { display: flex; flex-direction: column; gap: 8px; }
 
-@media (min-height: 760px) {
-  .app { padding-block: 24px; }
+/* 넓은 화면: 판은 왼쪽에 크게, HUD·안내·조작부는 오른쪽 세로 줄 */
+@media (min-aspect-ratio: 1/1) and (min-width: 600px) {
+  .game {
+    grid-template-areas: "board hud" "board hint" "board controls";
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) clamp(240px, 30vw, 340px);
+    column-gap: 20px;
+  }
+  .hud { flex-wrap: wrap; align-self: start; row-gap: 8px; }
+  .hud-stats { margin-left: auto; }
+  .hud-title { order: 5; flex: 1 1 100%; }
+  .hint { align-self: center; text-align: left; }
+  .controls { flex-direction: column; align-items: stretch; gap: 14px; }
+  .tools { max-width: none; }
+  .dpad { align-self: center; }
 }
+/* 가로로 낮은 화면(휴대폰 가로): 위아래 여백을 줄인다 */
+@media (max-height: 500px) {
+  .app { padding-block: 6px; }
+  .hint { min-height: 0; font-size: 13px; }
+}
+/* 큰 화면: 조작 버튼도 크게 */
+@media (min-width: 700px) and (min-height: 700px) {
+  .dpad { grid-template-columns: repeat(3, 60px); grid-template-rows: repeat(2, 60px); gap: 8px; }
+  .hud-name { font-size: 26px; }
+}
+
+/* 기울기 수평계: 가운데 고리 = 입력 기준(14°), 점 = 지금 기울기 */
+.meter {
+  position: relative; flex: none;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--wood);
+  background: radial-gradient(circle, #20453f 0 60%, #1a3a35 100%);
+  cursor: pointer;
+  padding: 0;
+}
+.meter-ring { position: absolute; inset: 9px; border-radius: 50%; border: 1px dashed #d9a94e80; }
+.meter-dot {
+  position: absolute; left: 50%; top: 50%;
+  width: 12px; height: 12px; margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: var(--brass);
+  box-shadow: 0 1px 3px #000a;
+  transform: translate(var(--mx, 0px), var(--my, 0px));
+  transition: transform .06s linear, background-color .15s;
+}
+.meter.waiting .meter-dot { background: var(--muted); }
+#btn-full .ico-exit { display: none; }
+#btn-full[aria-pressed="true"] .ico-enter { display: none; }
+#btn-full[aria-pressed="true"] .ico-exit { display: inline; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
 }

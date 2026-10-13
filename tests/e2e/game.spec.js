@@ -164,6 +164,18 @@ test('단일 파일 빌드(dist)도 그대로 실행된다', async ({ page }) =>
 });
 
 // ---------- 휴대폰 기울기 조작 ----------
+// 실제 자세(앞뒤 pitch, 좌우 roll, 도) → 브라우저가 보내는 beta/gamma 값
+function eulerFrom(pitch, roll) {
+  const r = Math.PI / 180;
+  const up = { x: -Math.sin(roll * r), y: Math.cos(roll * r) * Math.sin(pitch * r), z: Math.cos(roll * r) * Math.cos(pitch * r) };
+  const beta = Math.asin(Math.max(-1, Math.min(1, up.y))) / r;
+  const gamma = Math.atan2(-up.x, up.z) / r;
+  return beta >= 0 && up.z < 0 ? [180 - beta, gamma > 0 ? gamma - 180 : gamma + 180] : [beta, gamma];
+}
+async function pose(page, pitch, roll) {
+  const [beta, gamma] = eulerFrom(pitch, roll);
+  await orient(page, gamma, beta);
+}
 async function orient(page, gamma, beta) {
   await page.evaluate(([g, b]) => {
     window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: b, gamma: g }));
@@ -228,7 +240,7 @@ test('앱 매니페스트와 아이콘이 올바르다', async ({ page, request 
   expect(res.ok()).toBeTruthy();
   const m = await res.json();
   expect(m.name).toBe('틸트 구슬판');
-  expect(m.display).toBe('standalone');
+  expect(m.display).toBe('fullscreen');
   for (const icon of m.icons) {
     const r = await request.get(new URL(icon.src, page.url()).href);
     expect(r.ok(), icon.src).toBeTruthy();
@@ -248,4 +260,71 @@ test('한 번 연 뒤에는 인터넷 없이도 실행된다(오프라인)', asy
   await waitIdle(page);
   await expect(page.locator('#hud-moves')).toHaveText('1');
   await context.setOffline(false);
+});
+
+test('세워 든 상태(80°)에서 앞쪽으로 젖혀도 아래로 기울어진다 (폴드 사례)', async ({ page, isMobile }) => {
+  test.skip(!isMobile, '휴대폰 전용');
+  await page.locator('.level-btn').first().click();
+  await page.locator('#btn-motion').click();
+  await expect(page.locator('#meter')).toBeVisible();
+  await pose(page, 80, 0);       // 거의 세워서 든 상태 → 기준
+  await pose(page, 97, 0);       // 세로를 지나 17° 더 젖힘 → 아래
+  await waitIdle(page);
+  await expect(page.locator('#hud-moves')).toHaveText('1');
+  await pose(page, 82, 0);       // 돌아옴
+  await pose(page, 82, 18);      // 세운 채로 핸들처럼 오른쪽으로 18° 돌림 → 오른쪽
+  await waitIdle(page);
+  await expect(page.locator('#dlg-title')).toHaveText('완벽해요!');
+});
+
+test('세로를 지난 자세를 다른 각도 표현(beta 감소·gamma 뒤집힘)으로 보내도 아래가 된다', async ({ page, isMobile }) => {
+  test.skip(!isMobile, '휴대폰 전용');
+  await page.locator('.level-btn').first().click();
+  await page.locator('#btn-motion').click();
+  await orient(page, 1, 80);
+  await orient(page, -179, 180 - 97);   // 97°를 beta 83°, gamma -179°로 표현하는 브라우저
+  await waitIdle(page);
+  await expect(page.locator('#hud-moves')).toHaveText('1');
+});
+
+test('수평계를 누르면 지금 각도가 새 기준이 된다', async ({ page, isMobile }) => {
+  test.skip(!isMobile, '휴대폰 전용');
+  await page.locator('.level-btn').first().click();
+  await page.locator('#btn-motion').click();
+  await orient(page, 0, 20);
+  await orient(page, 0, 30);          // 10°: 아직 아님
+  await page.locator('#meter').click(); // 30°를 새 기준으로
+  await orient(page, 0, 30);
+  await orient(page, 0, 40);          // 새 기준에서 10° → 입력 없음
+  await page.waitForTimeout(200);
+  await expect(page.locator('#hud-moves')).toHaveText('0');
+  await expect(page.locator('#hint')).toContainText('다시 잡았습니다');
+});
+
+test('전체 화면 버튼으로 전체 화면을 켜고 끌 수 있다', async ({ page }) => {
+  await page.locator('.level-btn').first().click();
+  const btn = page.locator('#btn-full');
+  await expect(btn).toBeVisible();
+  await btn.click();
+  await expect(btn).toHaveAttribute('aria-pressed', 'true');
+  expect(await page.evaluate(() => !!document.fullscreenElement)).toBe(true);
+  await btn.click();
+  await expect(btn).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('판이 화면을 넉넉히 채운다', async ({ page }) => {
+  await page.locator('.level-btn').first().click();
+  const vp = page.viewportSize();
+  const frame = await page.locator('#frame').boundingBox();
+  // 5×5 판: 화면의 짧은 쪽 기준으로 절반 이상을 차지해야 한다
+  expect(Math.max(frame.width, frame.height)).toBeGreaterThan(Math.min(vp.width, vp.height) * 0.5);
+});
+
+test('넓은 화면에서는 판이 왼쪽, 조작부가 오른쪽에 놓인다', async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await page.locator('.level-btn').first().click();
+  const frame = await page.locator('#frame').boundingBox();
+  const pad = await page.locator('.dpad').boundingBox();
+  expect(pad.x).toBeGreaterThan(frame.x + frame.width);
+  expect(frame.height).toBeGreaterThan(550);
 });

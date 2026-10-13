@@ -61,6 +61,12 @@
         <div><dt>이동</dt><dd id="hud-moves">0</dd></div>
         <div><dt>최소</dt><dd id="hud-par">2</dd></div>
       </dl>
+      <button class="meter" id="meter" type="button" hidden aria-label="지금 각도를 수평 기준으로 다시 잡기" title="눌러서 지금 각도를 수평 기준으로">
+        <span class="meter-ring" aria-hidden="true"></span><span class="meter-dot" id="meter-dot" aria-hidden="true"></span>
+      </button>
+      <button class="icon-btn" id="btn-full" type="button" aria-label="전체 화면" aria-pressed="false" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="ico-enter" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><path class="ico-exit" d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+      </button>
     </header>
 
     <div class="board-area" id="board-area">
@@ -70,6 +76,7 @@
     </div>
 
     <p class="hint" id="hint" aria-live="polite"></p>
+    <p class="debug" id="debug" hidden></p>
 
     <div class="controls">
       <div class="tools">

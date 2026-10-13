@@ -2,7 +2,7 @@
 import { parseLevel, tilt, status, starsFor, cloneState } from './engine.js';
 import { LEVELS } from './levels.js';
 import { generatePuzzle, dateSeed } from './generator.js';
-import { createTiltDetector } from './motion.js';
+import { createTiltDetector, TILT_ON } from './motion.js';
 
 const $ = (sel) => document.querySelector(sel);
 const STORE_KEY = 'tilt-marble-v1';
@@ -16,9 +16,9 @@ function loadProgress() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     const data = raw ? JSON.parse(raw) : {};
-    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion };
+    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full };
   } catch {
-    return { best: {}, daily: {}, last: 0, motion: false };
+    return { best: {}, daily: {}, last: 0, motion: false, full: false };
   }
 }
 function saveProgress() {
@@ -108,11 +108,6 @@ function showScreen(name) {
   $('#menu').hidden = name !== 'menu';
   $('#game').hidden = name !== 'game';
   if (name === 'menu') renderMenu();
-
-// 앱 설치(PWA)·오프라인 실행: 매니페스트가 있는 정식 페이지에서만 서비스 워커를 등록한다
-if ('serviceWorker' in navigator && document.querySelector('link[rel="manifest"]')) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
-}
   else layoutBoard();
 }
 
@@ -128,6 +123,8 @@ function startLevel(def) {
   buildBoard();
   showScreen('game');
   updateHud();
+  // 단계 시작은 항상 사용자의 탭에서 일어나므로, 권한이 필요한 전체 화면·센서도 여기서 요청할 수 있다
+  if (progress.full && fullscreenSupported() && !fullscreenElement()) enterFullscreen();
   if (motion.on) motion.detector.calibrate();
   else if (motion.supported && progress.motion) enableMotion(false);
 }
@@ -180,7 +177,7 @@ function layoutBoard() {
   const pad = 20; // 테두리 두께 × 2
   const availW = area.clientWidth - pad;
   const availH = area.clientHeight - pad;
-  const cell = Math.max(24, Math.floor(Math.min(availW / game.level.w, availH / game.level.h, 72)));
+  const cell = Math.max(24, Math.floor(Math.min(availW / game.level.w, availH / game.level.h, 150)));
   const root = $('#app');
   root.style.setProperty('--cell', `${cell}px`);
   const board = $('#board');
@@ -369,6 +366,7 @@ window.addEventListener('resize', layoutBoard);
 if (window.ResizeObserver) new ResizeObserver(layoutBoard).observe(area);
 
 // ---------- 휴대폰 기울기 조작 ----------
+const debugOn = location.hash === '#debug';   // 주소 끝에 #debug를 붙이면 센서 원래 값을 화면에 보여 준다
 // 휴대폰을 기울이면 그 방향으로 판을 기울인다. 처음 든 각도를 수평으로 보고, 한 번 기울인 뒤에는
 // 처음 각도 근처로 돌아와야 다음 기울이기를 받는다.
 const motion = {
@@ -388,6 +386,18 @@ function setMotionButton() {
   const b = $('#btn-motion');
   b.hidden = !motion.supported;
   b.setAttribute('aria-pressed', String(motion.on));
+  $('#meter').hidden = !motion.on;
+  $('#debug').hidden = !(debugOn && motion.on);
+}
+
+// 수평계: 점이 고리(입력 기준 각도) 밖으로 나가면 그 방향으로 기울어진다. 회색이면 되돌아오기를 기다리는 중.
+const METER_R = 13;
+function updateMeter(r) {
+  const m = $('#meter');
+  const k = (v) => Math.max(-1.25, Math.min(1.25, v / TILT_ON)) * METER_R;
+  m.style.setProperty('--mx', `${k(r.x).toFixed(1)}px`);
+  m.style.setProperty('--my', `${k(r.y).toFixed(1)}px`);
+  m.classList.toggle('waiting', !r.armed);
 }
 
 function flashHint(text) {
@@ -399,7 +409,12 @@ function onOrientation(e) {
   // 센서가 없는 기기는 값이 빈(null) 이벤트를 한 번 보내기도 하므로 실제 값이 있을 때만 '동작 중'으로 본다
   if (e.beta == null || e.gamma == null) return;
   motion.gotEvent = true;
-  const r = motion.detector.feed(e.gamma, e.beta, screenAngle());
+  const angle = screenAngle();
+  const r = motion.detector.feed(e.beta, e.gamma, angle);
+  updateMeter(r);
+  if (debugOn) {
+    $('#debug').textContent = `beta ${e.beta.toFixed(1)} · gamma ${e.gamma.toFixed(1)} · 화면 ${angle}° → x ${r.x.toFixed(1)} y ${r.y.toFixed(1)}${r.dir ? ` ▶ ${r.dir}` : ''}`;
+  }
   const frame = $('#frame');
   if (!game.animating && !$('#game').hidden) {
     const clamp = (v) => Math.max(-6, Math.min(6, v / 3));
@@ -431,7 +446,7 @@ async function enableMotion(fromButton) {
   window.addEventListener('deviceorientation', onOrientation);
   setMotionButton();
   if (fromButton) { progress.motion = true; saveProgress(); }
-  flashHint('휴대폰을 기울여 보세요. 지금 각도가 수평 기준이고, 한 번 기울인 뒤에는 처음 각도로 돌아오세요.');
+  flashHint('휴대폰을 기울여 보세요. 지금 각도가 수평 기준입니다. 오른쪽 위 수평계의 점이 고리 밖으로 나가면 기울어집니다.');
   clearTimeout(motion.watchdog);
   motion.watchdog = setTimeout(() => {
     if (motion.on && !motion.gotEvent) {
@@ -454,7 +469,50 @@ function disableMotion(fromButton) {
 }
 
 $('#btn-motion').addEventListener('click', () => (motion.on ? disableMotion(true) : enableMotion(true)));
+$('#meter').addEventListener('click', () => {
+  motion.detector.calibrate();
+  updateMeter({ x: 0, y: 0, armed: true });
+  flashHint('지금 각도를 수평 기준으로 다시 잡았습니다.');
+});
 setMotionButton();
+
+// ---------- 전체 화면 ----------
+function fullscreenSupported() {
+  return !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+}
+function fullscreenElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+function enterFullscreen() {
+  const el = document.documentElement;
+  try {
+    const p = el.requestFullscreen ? el.requestFullscreen({ navigationUI: 'hide' }) : el.webkitRequestFullscreen?.();
+    p?.catch?.(() => {});
+  } catch { /* 지원하지 않는 환경 */ }
+}
+function exitFullscreen() {
+  try {
+    const p = document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen?.();
+    p?.catch?.(() => {});
+  } catch { /* 무시 */ }
+}
+function setFullButton() {
+  const b = $('#btn-full');
+  b.hidden = !fullscreenSupported();
+  const on = !!fullscreenElement();
+  b.setAttribute('aria-pressed', String(on));
+  b.setAttribute('aria-label', on ? '전체 화면 끝내기' : '전체 화면');
+}
+$('#btn-full').addEventListener('click', () => {
+  if (fullscreenElement()) { progress.full = false; exitFullscreen(); }
+  else { progress.full = true; enterFullscreen(); }
+  saveProgress();
+});
+['fullscreenchange', 'webkitfullscreenchange'].forEach((ev) => document.addEventListener(ev, () => {
+  setFullButton();
+  requestAnimationFrame(layoutBoard);
+}));
+setFullButton();
 
 // 자동 테스트용 읽기 전용 정보
 window.__tilt = {
