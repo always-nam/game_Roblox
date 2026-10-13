@@ -9,6 +9,7 @@
     "test": "npm run test:unit && npm run build && npm run test:e2e",
     "test:unit": "node --test 'tests/unit/*.test.js'",
     "test:e2e": "playwright test",
+    "test:live": "BASE_URL=https://always-nam.github.io/game_Roblox/ playwright test",
     "build": "node scripts/build.mjs"
   },
   "devDependencies": {

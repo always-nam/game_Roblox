@@ -2,6 +2,8 @@
 
 판을 기울여 색 구슬을 같은 색 구멍에 넣는 HTML5/JavaScript 퍼즐 게임입니다. 설치 없이 PC와 모바일 브라우저에서 실행됩니다.
 
+**▶ 플레이: https://always-nam.github.io/game_Roblox/** (단일 파일 버전: [single.html](https://always-nam.github.io/game_Roblox/single.html))
+
 ## 규칙
 
 - 판을 **위·아래·왼쪽·오른쪽**으로 기울이면 판 위의 모든 구슬과 돌이 **한꺼번에** 벽이나 다른 조각에 막힐 때까지 굴러갑니다.
@@ -37,6 +39,7 @@ npm run build        # dist/tilt-marble.html: CSS·JS를 모두 넣은 단일 �
 ```bash
 npm run test:unit    # 게임 로직·레벨 풀이 가능성·생성기 (Node 내장 테스트)
 npm test             # 단위 테스트 + 빌드 + Playwright 브라우저 테스트(데스크톱·모바일)
+npm run test:live    # 배포된 사이트 대상 브라우저 테스트
 ```
 
 - 단위 테스트는 모든 단계를 너비 우선 탐색 풀이기로 풀어 **풀 수 있는지**와 **최소 이동 수(par)**를 검증합니다.
@@ -58,4 +61,10 @@ tests/              단위 테스트(unit)·브라우저 테스트(e2e)
 
 ## 배포
 
-정적 파일만으로 동작하므로 GitHub Pages, Netlify, Vercel 등 어느 정적 호스팅에도 그대로 올릴 수 있습니다. 현재 저장소에는 배포 설정이 연결되어 있지 않습니다.
+GitHub Pages로 배포됩니다(`.github/workflows/deploy.yml`). 작업 브랜치에 push하면 단위 테스트를 거쳐 자동 배포됩니다.
+
+배포된 사이트를 대상으로 브라우저 테스트를 실행하려면:
+
+```bash
+npm run test:live    # https://always-nam.github.io/game_Roblox/ 대상
+```

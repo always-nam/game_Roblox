@@ -14,7 +14,7 @@ async function waitIdle(page) {
 
 test.beforeEach(async ({ page }) => {
   page.on('pageerror', (e) => { throw e; });
-  await page.goto('/index.html');
+  await page.goto('index.html');
   await page.evaluate(() => localStorage.clear());
   await page.reload();
 });
@@ -145,7 +145,7 @@ test('저장소가 막혀 있어도 게임이 동작한다', async ({ page }) =>
   await page.addInitScript(() => {
     Object.defineProperty(window, 'localStorage', { get() { throw new Error('blocked'); } });
   });
-  await page.goto('/index.html');
+  await page.goto('index.html');
   await page.locator('.level-btn').first().click();
   await page.keyboard.press('ArrowDown');
   await waitIdle(page);
@@ -153,7 +153,7 @@ test('저장소가 막혀 있어도 게임이 동작한다', async ({ page }) =>
 });
 
 test('단일 파일 빌드(dist)도 그대로 실행된다', async ({ page }) => {
-  const res = await page.goto('/dist/tilt-marble.html');
+  const res = await page.goto(process.env.BASE_URL ? 'single.html' : 'dist/tilt-marble.html');
   test.skip(!res || !res.ok(), 'dist가 없습니다. npm run build를 먼저 실행하세요.');
   await page.locator('.level-btn').first().click();
   for (const d of solutionFor(LEVELS[0].rows)) {
