@@ -1,20 +1,22 @@
 name: roblox-publish
 
-# '로블록스 게임1 test' 폴더가 바뀌어 push되면 퍼즐 규칙 테스트 → Rojo 빌드 → Roblox Open Cloud로 게시합니다.
-# 필요한 설정 (저장소 Settings → Secrets and variables → Actions):
-#   Secret   ROBLOX_API_KEY      : universe-places 쓰기 권한이 있는 Open Cloud API 키
-#   Variable ROBLOX_UNIVERSE_ID  : 게임(Experience)의 Universe ID
-#   Variable ROBLOX_PLACE_ID     : 게시할 Place ID
-# 설정이 없으면 빌드까지만 하고 게시는 건너뜁니다.
+# games/<게임폴더>가 바뀌어 push되면 그 게임만 테스트 → Rojo 빌드 → Roblox Open Cloud로 게시합니다.
+# 게임 폴더마다 game.json에 universeId / placeId를 적어 둡니다.
+# 필요한 설정: 저장소 Secret ROBLOX_API_KEY (universe-places 쓰기 권한). 없으면 빌드까지만 합니다.
 on:
   push:
     branches:
       - claude/focused-maxwell-9eeogr
       - claude/html5-javascript-puzzle-game-np4u8y
     paths:
-      - '로블록스 게임1 test/**'
+      - 'games/**'
       - '.github/workflows/roblox-publish.yml'
   workflow_dispatch:
+    inputs:
+      game:
+        description: '게시할 게임 폴더 이름 (예: 001-lights-out). 비우면 전체'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -29,22 +31,38 @@ env:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: 로블록스 게임1 test
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select games
+        id: select
+        env:
+          INPUT_GAME: ${{ github.event.inputs.game }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          all=$(find games -mindepth 2 -maxdepth 2 -name game.json -printf '%h\n' | sort)
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ -n "$INPUT_GAME" ]; then games="games/$INPUT_GAME"; else games="$all"; fi
+          elif [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            games="$all"
+          elif git diff --name-only "$BEFORE" "$GITHUB_SHA" | grep -qx '.github/workflows/roblox-publish.yml'; then
+            games="$all"
+          else
+            games=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- games/ | cut -d/ -f1-2 | sort -u \
+              | while read -r d; do [ -f "$d/game.json" ] && echo "$d"; done)
+          fi
+          echo "선택된 게임:"; echo "${games:-(없음)}"
+          { echo 'games<<EOF'; echo "$games"; echo 'EOF'; } >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
+        if: steps.select.outputs.games != ''
         with:
           python-version: '3.12'
 
-      - name: Logic tests
-        run: |
-          pip install lupa
-          python3 tests/run.py
-
       - name: Cache Rojo
+        if: steps.select.outputs.games != ''
         id: rojo-cache
         uses: actions/cache@v4
         with:
@@ -52,35 +70,43 @@ jobs:
           key: rojo-${{ env.ROJO_VERSION }}-${{ runner.os }}
 
       - name: Install Rojo
-        if: steps.rojo-cache.outputs.cache-hit != 'true'
+        if: steps.select.outputs.games != '' && steps.rojo-cache.outputs.cache-hit != 'true'
         run: cargo install rojo --version "$ROJO_VERSION" --locked
 
-      - name: Build place file
-        run: rojo build -o LightsOut.rbxl
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: LightsOut-place
-          path: 로블록스 게임1 test/LightsOut.rbxl
-
-      - name: Publish to Roblox
+      - name: Test, build and publish
+        if: steps.select.outputs.games != ''
         env:
+          GAMES: ${{ steps.select.outputs.games }}
           ROBLOX_API_KEY: ${{ secrets.ROBLOX_API_KEY }}
-          UNIVERSE_ID: ${{ vars.ROBLOX_UNIVERSE_ID }}
-          PLACE_ID: ${{ vars.ROBLOX_PLACE_ID }}
         run: |
-          if [ -z "$ROBLOX_API_KEY" ] || [ -z "$UNIVERSE_ID" ] || [ -z "$PLACE_ID" ]; then
-            echo "::notice::ROBLOX_API_KEY / ROBLOX_UNIVERSE_ID / ROBLOX_PLACE_ID 설정이 없어 게시를 건너뜁니다."
-            exit 0
-          fi
-          status=$(curl -sS -o response.json -w '%{http_code}' -X POST \
-            "https://apis.roblox.com/universes/v1/${UNIVERSE_ID}/places/${PLACE_ID}/versions?versionType=Published" \
-            -H "x-api-key: ${ROBLOX_API_KEY}" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary @LightsOut.rbxl)
-          cat response.json; echo
-          if [ "$status" != "200" ]; then
-            echo "::error::Roblox 게시 실패 (HTTP $status)"
-            exit 1
-          fi
-          echo "::notice::게시 완료: https://www.roblox.com/games/${PLACE_ID}"
+          pip install -q lupa
+          failed=0
+          while read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "::group::$dir"
+            universe=$(jq -r '.universeId' "$dir/game.json")
+            place=$(jq -r '.placeId' "$dir/game.json")
+            # 서브셸이 `|| failed=1` 뒤에 있으면 set -e가 무시되므로 단계마다 직접 실패를 처리합니다.
+            (
+              cd "$dir" || exit 1
+              if [ -f tests/run.py ]; then python3 tests/run.py || exit 1; fi
+              rojo build -o place.rbxl || exit 1
+              if [ -z "$ROBLOX_API_KEY" ]; then
+                echo "::notice::$dir: ROBLOX_API_KEY가 없어 게시를 건너뜁니다."
+                exit 0
+              fi
+              status=$(curl -sS -o response.json -w '%{http_code}' -X POST \
+                "https://apis.roblox.com/universes/v1/${universe}/places/${place}/versions?versionType=Published" \
+                -H "x-api-key: ${ROBLOX_API_KEY}" \
+                -H "Content-Type: application/octet-stream" \
+                --data-binary @place.rbxl)
+              cat response.json; echo
+              if [ "$status" != "200" ]; then
+                echo "::error::$dir: Roblox 게시 실패 (HTTP $status)"
+                exit 1
+              fi
+              echo "::notice::$dir 게시 완료: https://www.roblox.com/games/${place}"
+            ) || failed=1
+            echo "::endgroup::"
+          done <<< "$GAMES"
+          exit $failed
