@@ -2,6 +2,7 @@
 import { parseLevel, tilt, status, starsFor, cloneState } from './engine.js';
 import { LEVELS } from './levels.js';
 import { generatePuzzle, dateSeed } from './generator.js';
+import { createTiltDetector } from './motion.js';
 
 const $ = (sel) => document.querySelector(sel);
 const STORE_KEY = 'tilt-marble-v1';
@@ -15,9 +16,9 @@ function loadProgress() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     const data = raw ? JSON.parse(raw) : {};
-    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0 };
+    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion };
   } catch {
-    return { best: {}, daily: {}, last: 0 };
+    return { best: {}, daily: {}, last: 0, motion: false };
   }
 }
 function saveProgress() {
@@ -107,6 +108,11 @@ function showScreen(name) {
   $('#menu').hidden = name !== 'menu';
   $('#game').hidden = name !== 'game';
   if (name === 'menu') renderMenu();
+
+// 앱 설치(PWA)·오프라인 실행: 매니페스트가 있는 정식 페이지에서만 서비스 워커를 등록한다
+if ('serviceWorker' in navigator && document.querySelector('link[rel="manifest"]')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
   else layoutBoard();
 }
 
@@ -122,6 +128,8 @@ function startLevel(def) {
   buildBoard();
   showScreen('game');
   updateHud();
+  if (motion.on) motion.detector.calibrate();
+  else if (motion.supported && progress.motion) enableMotion(false);
 }
 
 function buildBoard() {
@@ -209,6 +217,7 @@ function doTilt(dir) {
 function animateMoves(moves, dir) {
   const board = $('#board');
   const frame = $('#frame');
+  frame.classList.remove('live');
   frame.className = `frame tilt-${dir}`;
   game.animating = true;
   let longest = 0;
@@ -359,10 +368,104 @@ $('#btn-daily').addEventListener('click', () => startLevel(getDaily()));
 window.addEventListener('resize', layoutBoard);
 if (window.ResizeObserver) new ResizeObserver(layoutBoard).observe(area);
 
+// ---------- 휴대폰 기울기 조작 ----------
+// 휴대폰을 기울이면 그 방향으로 판을 기울인다. 처음 든 각도를 수평으로 보고, 한 번 기울인 뒤에는
+// 처음 각도 근처로 돌아와야 다음 기울이기를 받는다.
+const motion = {
+  supported: 'DeviceOrientationEvent' in window && (navigator.maxTouchPoints > 0 || window.matchMedia?.('(pointer: coarse)').matches),
+  on: false,
+  detector: createTiltDetector(),
+  gotEvent: false,
+  watchdog: 0,
+};
+
+function screenAngle() {
+  const a = window.screen?.orientation?.angle ?? window.orientation ?? 0;
+  return Number(a) || 0;
+}
+
+function setMotionButton() {
+  const b = $('#btn-motion');
+  b.hidden = !motion.supported;
+  b.setAttribute('aria-pressed', String(motion.on));
+}
+
+function flashHint(text) {
+  $('#hint').textContent = text;
+}
+
+function onOrientation(e) {
+  if (!motion.on) return;
+  // 센서가 없는 기기는 값이 빈(null) 이벤트를 한 번 보내기도 하므로 실제 값이 있을 때만 '동작 중'으로 본다
+  if (e.beta == null || e.gamma == null) return;
+  motion.gotEvent = true;
+  const r = motion.detector.feed(e.gamma, e.beta, screenAngle());
+  const frame = $('#frame');
+  if (!game.animating && !$('#game').hidden) {
+    const clamp = (v) => Math.max(-6, Math.min(6, v / 3));
+    frame.classList.add('live');
+    frame.style.setProperty('--rx', `${-clamp(r.y)}deg`);
+    frame.style.setProperty('--ry', `${clamp(r.x)}deg`);
+  }
+  if (r.dir && $('#overlay').hidden) doTilt(r.dir);
+}
+
+async function enableMotion(fromButton) {
+  if (!motion.supported || motion.on) return;
+  const DOE = window.DeviceOrientationEvent;
+  if (typeof DOE.requestPermission === 'function') {
+    try {
+      const res = await DOE.requestPermission();
+      if (res !== 'granted') {
+        flashHint('기울기 센서 사용이 허용되지 않았습니다. 스와이프나 방향 버튼으로 조작하세요.');
+        return;
+      }
+    } catch {
+      if (fromButton) flashHint('기울기 센서를 켜지 못했습니다. 다시 한 번 눌러 주세요.');
+      return;
+    }
+  }
+  motion.on = true;
+  motion.gotEvent = false;
+  motion.detector.calibrate();
+  window.addEventListener('deviceorientation', onOrientation);
+  setMotionButton();
+  if (fromButton) { progress.motion = true; saveProgress(); }
+  flashHint('휴대폰을 기울여 보세요. 지금 각도가 수평 기준이고, 한 번 기울인 뒤에는 처음 각도로 돌아오세요.');
+  clearTimeout(motion.watchdog);
+  motion.watchdog = setTimeout(() => {
+    if (motion.on && !motion.gotEvent) {
+      disableMotion(false);
+      flashHint('이 기기에서는 기울기 센서 값을 받을 수 없습니다. 스와이프나 방향 버튼으로 조작하세요.');
+    }
+  }, 2500);
+}
+
+function disableMotion(fromButton) {
+  motion.on = false;
+  clearTimeout(motion.watchdog);
+  window.removeEventListener('deviceorientation', onOrientation);
+  const frame = $('#frame');
+  frame.classList.remove('live');
+  frame.style.removeProperty('--rx');
+  frame.style.removeProperty('--ry');
+  setMotionButton();
+  if (fromButton) { progress.motion = false; saveProgress(); updateHud(); }
+}
+
+$('#btn-motion').addEventListener('click', () => (motion.on ? disableMotion(true) : enableMotion(true)));
+setMotionButton();
+
 // 자동 테스트용 읽기 전용 정보
 window.__tilt = {
+  motion: () => ({ supported: motion.supported, on: motion.on }),
   info: () => ({ key: game.def?.key, moves: game.moves, status: game.state ? status(game.state) : null, animating: game.animating, par: game.def?.par }),
   rows: () => game.def?.rows,
 };
 
 renderMenu();
+
+// 앱 설치(PWA)·오프라인 실행: 매니페스트가 있는 정식 페이지에서만 서비스 워커를 등록한다
+if ('serviceWorker' in navigator && document.querySelector('link[rel="manifest"]')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}

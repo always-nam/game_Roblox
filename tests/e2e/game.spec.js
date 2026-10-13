@@ -162,3 +162,90 @@ test('단일 파일 빌드(dist)도 그대로 실행된다', async ({ page }) =>
   }
   await expect(page.locator('#dlg-title')).toHaveText('완벽해요!');
 });
+
+// ---------- 휴대폰 기울기 조작 ----------
+async function orient(page, gamma, beta) {
+  await page.evaluate(([g, b]) => {
+    window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: b, gamma: g }));
+  }, [gamma, beta]);
+}
+
+test('PC(터치 없음)에서는 기울기 버튼이 보이지 않는다', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'PC 전용');
+  await page.locator('.level-btn').first().click();
+  await expect(page.locator('#btn-motion')).toBeHidden();
+});
+
+test('휴대폰을 기울여 1단계를 풀 수 있다', async ({ page, isMobile }) => {
+  test.skip(!isMobile, '휴대폰 전용');
+  await page.locator('.level-btn').first().click();
+  const btn = page.locator('#btn-motion');
+  await expect(btn).toBeVisible();
+  await btn.click();
+  await expect(btn).toHaveAttribute('aria-pressed', 'true');
+  await orient(page, 2, 35);    // 비스듬히 든 상태 → 수평 기준
+  await orient(page, 2, 55);    // 앞쪽을 20° 들어 올림 → 아래
+  await waitIdle(page);
+  await expect(page.locator('#hud-moves')).toHaveText('1');
+  await orient(page, 2, 50);    // 아직 기준 근처로 안 돌아옴 → 무시
+  await orient(page, 25, 50);
+  await waitIdle(page);
+  await expect(page.locator('#hud-moves')).toHaveText('1');
+  await orient(page, 3, 36);    // 기준 근처로 복귀 → 다시 받을 준비
+  await orient(page, 24, 36);   // 오른쪽으로 22° → 오른쪽
+  await waitIdle(page);
+  await expect(page.locator('#dlg-title')).toHaveText('완벽해요!');
+});
+
+test('기울기 설정은 다음 단계에서도 유지되고, 끌 수 있다', async ({ page, isMobile }) => {
+  test.skip(!isMobile, '휴대폰 전용');
+  await page.locator('.level-btn').first().click();
+  await page.locator('#btn-motion').click();
+  await orient(page, 0, 30);
+  await page.locator('#btn-menu').click();
+  await page.locator('.level-btn').first().click();
+  await expect(page.locator('#btn-motion')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#btn-motion').click();
+  await expect(page.locator('#btn-motion')).toHaveAttribute('aria-pressed', 'false');
+  await orient(page, 0, 0);
+  await orient(page, 0, 40);
+  await page.waitForTimeout(300);
+  await expect(page.locator('#hud-moves')).toHaveText('0');
+});
+
+test('센서 값이 오지 않으면 스스로 꺼지고 안내한다', async ({ page, isMobile }) => {
+  test.skip(!isMobile, '휴대폰 전용');
+  await page.locator('.level-btn').first().click();
+  await page.locator('#btn-motion').click();
+  await expect(page.locator('#btn-motion')).toHaveAttribute('aria-pressed', 'false', { timeout: 5000 });
+  await expect(page.locator('#hint')).toContainText('기울기 센서 값을 받을 수 없습니다');
+});
+
+// ---------- 앱 설치(PWA) ----------
+test('앱 매니페스트와 아이콘이 올바르다', async ({ page, request }) => {
+  const href = await page.locator('link[rel="manifest"]').getAttribute('href');
+  const res = await request.get(new URL(href, page.url()).href);
+  expect(res.ok()).toBeTruthy();
+  const m = await res.json();
+  expect(m.name).toBe('틸트 구슬판');
+  expect(m.display).toBe('standalone');
+  for (const icon of m.icons) {
+    const r = await request.get(new URL(icon.src, page.url()).href);
+    expect(r.ok(), icon.src).toBeTruthy();
+    expect(r.headers()['content-type']).toContain('image/png');
+  }
+  expect(m.icons.some((i) => i.purpose === 'maskable')).toBeTruthy();
+});
+
+test('한 번 연 뒤에는 인터넷 없이도 실행된다(오프라인)', async ({ page, context }) => {
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.reload();               // 서비스 워커가 페이지를 제어하는 상태로 다시 열기
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await context.setOffline(true);
+  await page.reload();
+  await page.locator('.level-btn').first().click();
+  await page.keyboard.press('ArrowDown');
+  await waitIdle(page);
+  await expect(page.locator('#hud-moves')).toHaveText('1');
+  await context.setOffline(false);
+});

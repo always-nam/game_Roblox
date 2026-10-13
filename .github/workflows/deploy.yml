@@ -30,7 +30,7 @@ jobs:
         run: |
           npm run build
           mkdir -p _site
-          cp -r index.html style.css src _site/
+          cp -r index.html style.css src icons manifest.webmanifest sw.js _site/
           cp dist/tilt-marble.html _site/single.html
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5

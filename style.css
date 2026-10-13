@@ -27,6 +27,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -133,6 +134,9 @@ button { font: inherit; color: inherit; }
 .btn small { color: var(--muted); font: 500 12px var(--font-num); }
 .btn-primary { background: linear-gradient(180deg, #e6b95c, var(--brass)); border-color: #f0c870; color: var(--brass-ink); font-weight: 700; }
 .btn-primary:hover { border-color: #fff0c4; }
+.btn-motion[aria-pressed="true"] { background: linear-gradient(180deg, #e6b95c, var(--brass)); border-color: #f0c870; color: var(--brass-ink); font-weight: 700; }
+.btn-motion { white-space: nowrap; }
+.btn-motion svg { flex: none; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 .icon-btn {
   width: 44px; height: 44px; flex: none;
@@ -172,6 +176,9 @@ button { font: inherit; color: inherit; }
     repeating-linear-gradient(97deg, #0000 0 7px, #0000000f 7px 9px),
     linear-gradient(160deg, var(--wood-hi), var(--wood) 45%, var(--wood-lo));
   box-shadow: 0 18px 40px -12px #000c, inset 0 1px 0 #ffffff30, inset 0 -2px 0 #0004;
+  --rx: 0deg;
+  --ry: 0deg;
+  transform: rotateX(var(--rx)) rotateY(var(--ry));
   transition: transform .18s ease-out;
   transform-style: preserve-3d;
 }
@@ -179,6 +186,7 @@ button { font: inherit; color: inherit; }
 .frame.tilt-down  { transform: rotateX(-5deg); }
 .frame.tilt-left  { transform: rotateY(-5deg); }
 .frame.tilt-right { transform: rotateY(5deg); }
+.frame.live { transition-duration: .08s; }
 .frame.shake { animation: shake .35s ease; }
 @keyframes shake { 25% { translate: -4px 0; } 75% { translate: 4px 0; } }
 
