@@ -16,7 +16,11 @@ import {
 const $ = (sel) => document.querySelector(sel);
 const STORE_KEY = 'tilt-marble-v1';
 const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-const SINK_MS = reducedMotion ? 0 : 320;
+// 기기의 '움직임 줄이기'(안드로이드 애니메이션 제거·절전 모드 등)가 켜져 있어도 구슬이 굴러가는 모습은
+// 게임을 이해하는 데 꼭 필요하므로 그대로 보여 주고, 튕김·판 기울기 같은 꾸밈만 줄인다.
+// (자동 테스트만 window.__TILT_FAST로 연출을 건너뛴다)
+const fastAnim = () => !!window.__TILT_FAST;
+const SINK_MS = 320;
 
 // ---------- 저장 (브라우저 저장소가 막혀 있어도 게임은 동작) ----------
 function loadProgress() {
@@ -381,8 +385,8 @@ function animateMoves(moves, dir, before) {
     const prevPiece = before.pieces.find((p) => p.id === m.id);
     const ball = el.querySelector('.ball');
     const skin = { x: Number(el.dataset.sx) || 0, y: Number(el.dataset.sy) || 0 };
-    const k = rollKeyframes({ from: prevPiece, to: last, cell, end: m.end, kind: prevPiece.kind, skin });
-    const dur = reducedMotion ? 1 : k.duration;
+    const k = rollKeyframes({ from: prevPiece, to: last, cell, end: m.end, kind: prevPiece.kind, skin, calm: reducedMotion });
+    const dur = fastAnim() ? 1 : k.duration;
     el.style.setProperty('--x', last.x);
     el.style.setProperty('--y', last.y);
     if (el.animate) {
@@ -391,7 +395,7 @@ function animateMoves(moves, dir, before) {
     }
     // 소리: 굴러감(빨라질수록 커짐) → 벽 충돌 / 구멍 / 함정
     const cells = m.path.length;
-    const travel = reducedMotion ? 0 : rollDuration(cells, { bounce: false }) / 1000;
+    const travel = fastAnim() ? 0 : rollDuration(cells, { bounce: false }) / 1000;
     playRoll({ dur: travel, cells, kind: prevPiece.kind, vol });
     if (m.end === 'stop') playHit({ at: travel, speed: Math.min(1, cells / 5), kind: prevPiece.kind, vol });
     else if (m.end === 'hole') playHole({ at: travel, vol });
@@ -404,7 +408,7 @@ function animateMoves(moves, dir, before) {
     }
     let total = dur;
     if (m.end !== 'stop') {
-      total += SINK_MS;
+      total += fastAnim() ? 0 : SINK_MS;
       setTimeout(() => {
         el.classList.add(m.end === 'hole' ? 'sink' : 'drop');
         if (m.end === 'hole' || m.end === 'plug') {
@@ -623,7 +627,7 @@ function onOrientation(e) {
   updateMeter(r);
   if (debugOn) {
     const f = (v) => (v == null ? '-' : v.toFixed(1));
-    $('#debug').textContent = `α ${f(e.alpha)} β ${f(e.beta)} γ ${f(e.gamma)} · 화면 ${angle}° → x ${f(r.x)} y ${f(r.y)} · ${r.state}${r.dir ? ` ▶ ${r.dir}` : ''}`;
+    $('#debug').textContent = `α ${f(e.alpha)} β ${f(e.beta)} γ ${f(e.gamma)} · 화면 ${angle}° → x ${f(r.x)} y ${f(r.y)} · ${r.state} · 움직임줄이기 ${reducedMotion ? '켜짐' : '꺼짐'}`;
   }
   const frame = $('#frame');
   if (!game.animating && !$('#game').hidden) {
@@ -858,7 +862,7 @@ window.__tilt = {
   sound: () => ({ ...soundStats, enabled: soundEnabled() }),
   music: () => ({ ...musicInfo(), enabled: musicEnabled() }),
   demo: () => ({ running: titleDemo.running, steps: titleDemo.steps }),
-  info: () => ({ key: game.def?.key, moves: game.moves, status: game.state ? status(game.state) : null, animating: game.animating, par: game.def?.par }),
+  info: () => ({ reducedMotion, key: game.def?.key, moves: game.moves, status: game.state ? status(game.state) : null, animating: game.animating, par: game.def?.par }),
   rows: () => game.def?.rows,
   story: () => ({ open: !$('#story').hidden, i: story.i, n: story.lines.length }),
 };

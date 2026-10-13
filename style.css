@@ -556,6 +556,9 @@ button { font: inherit; color: inherit; }
 #btn-full[aria-pressed="true"] .ico-exit { display: inline; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+  /* 구슬이 구멍에 빠지는 모습은 게임에 꼭 필요한 움직임이라 남긴다 */
+  .piece .ball, .piece::before { transition-duration: .3s !important; }
+  .piece { transition: none !important; }   /* 위치는 굴러가기 애니메이션(Web Animations)만 움직인다 */
 }
 
 /* ===================== 시작 화면(모션 그래픽) =====================

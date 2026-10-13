@@ -29,11 +29,12 @@ const px = (x, y, cell) => `translate(${(x * cell).toFixed(2)}px, ${(y * cell).t
  * from/to: 칸 좌표 {x, y}, cell: 칸 크기(px), end: 'stop' | 'hole' | 'pit' | 'plug', kind: 'marble' | 'stone'
  * 반환: { duration, frames, skinFrames } — skinFrames는 구슬 표면 무늬(background-position)용
  */
-export function rollKeyframes({ from, to, cell, end = 'stop', kind = 'marble', skin = { x: 0, y: 0 } }) {
+export function rollKeyframes({ from, to, cell, end = 'stop', kind = 'marble', skin = { x: 0, y: 0 }, calm = false }) {
   const dx = Math.sign(to.x - from.x);
   const dy = Math.sign(to.y - from.y);
   const cells = Math.abs(to.x - from.x) + Math.abs(to.y - from.y);
-  const bounce = end === 'stop';
+  // calm: 기기의 '움직임 줄이기' 설정 — 구르기는 그대로 보여 주고(게임에 꼭 필요한 움직임), 튕김·찌그러짐만 뺀다
+  const bounce = end === 'stop' && !calm;
   const duration = rollDuration(cells, { bounce });
   const dist = cells * cell;
   const skinTo = { x: skin.x + dx * dist, y: skin.y + dy * dist };

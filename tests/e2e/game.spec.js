@@ -115,7 +115,7 @@ test('오늘의 퍼즐이 열리고 자동 풀이로 완료할 수 있다', asyn
 
 test('32단계(4장) 전체를 브라우저에서 순서대로 풀 수 있다', async ({ page }) => {
   test.setTimeout(240_000);
-  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.addInitScript(() => { window.__TILT_FAST = true; });   // 32단계를 빨리 돌리려고 연출만 생략
   await page.reload();
   await page.locator('#btn-continue').click();
   for (let i = 0; i < LEVELS.length; i++) {
@@ -511,8 +511,8 @@ test('[스토리] 장의 마지막 단계를 풀면 할아버지 편지 → 다�
     best: Object.fromEntries([...Array(7)].map((_, i) => [i, 50])), seen: { 'intro-0': true },
   })));
   await page.reload();
+  await page.evaluate(() => { window.__TILT_FAST = true; });
   await page.locator('.level-btn').nth(7).click();
-  await page.emulateMedia({ reducedMotion: 'reduce' });
   for (const d of solutionFor(LEVELS[7].rows)) { await page.keyboard.press(KEYS[d]); await waitIdle(page); }
   await page.getByRole('button', { name: '할아버지의 편지 읽기' }).click();
   await expect(page.locator('#letter-title')).toHaveText('첫 번째 편지');
@@ -612,4 +612,30 @@ test('[장 선택] 장마다 그림 카드가 있고, 놀이 방법을 볼 수 �
   await expect(page.locator('#howto .rules li')).toHaveCount(4);
   await page.locator('#howto-close').click();
   await expect(page.locator('#howto')).toBeHidden();
+});
+
+test('[S26 사례] 기기의 \'움직임 줄이기\'가 켜져 있어도 구슬은 순간이동하지 않고 굴러간다', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.reload();
+  expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
+  await page.locator('.level-btn').first().click();
+  await page.keyboard.press('ArrowDown');
+  const info = await page.evaluate(() => {
+    const move = document.querySelector('.piece.marble').getAnimations().find((x) => !(x instanceof CSSTransition));
+    return { duration: move.effect.getTiming().duration, frames: move.effect.getKeyframes().length };
+  });
+  expect(info.duration).toBeGreaterThanOrEqual(300);   // 굴러가는 시간은 그대로
+  expect(info.frames).toBe(2);                          // 튕김·찌그러짐(꾸밈)만 생략
+  // 중간 지점에서 구슬이 출발점과 도착점 사이에 있다(순간이동 아님)
+  await page.waitForTimeout(info.duration * 0.6);
+  const mid = await page.evaluate(() => {
+    const el = document.querySelector('.piece.marble');
+    const m = new DOMMatrix(getComputedStyle(el).transform);
+    const cell = parseFloat(getComputedStyle(document.getElementById('app')).getPropertyValue('--cell'));
+    return m.m42 / cell;
+  });
+  expect(mid).toBeGreaterThan(1.05);
+  expect(mid).toBeLessThan(2.95);
+  await waitIdle(page);
+  await expect(page.locator('#hud-moves')).toHaveText('1');
 });

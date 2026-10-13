@@ -77,8 +77,8 @@ export function createTitleDemo({ board, frame, rows }) {
       const prev = before.pieces.find((p) => p.id === m.id);
       const last = m.path[m.path.length - 1];
       const skin = { x: Number(el.dataset.sx) || 0, y: Number(el.dataset.sy) || 0 };
-      const k = rollKeyframes({ from: prev, to: last, cell, end: m.end, kind: prev.kind, skin });
-      const dur = reduced() ? 1 : k.duration;
+      const k = rollKeyframes({ from: prev, to: last, cell, end: m.end, kind: prev.kind, skin, calm: reduced() });
+      const dur = k.duration;
       el.style.setProperty('--x', last.x);
       el.style.setProperty('--y', last.y);
       el.animate?.(k.frames, { duration: dur });
