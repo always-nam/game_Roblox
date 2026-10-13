@@ -1,6 +1,8 @@
 // 틸트 구슬판 — 화면과 입력 처리
-import { parseLevel, tilt, status, starsFor, cloneState } from './engine.js';
-import { LEVELS } from './levels.js';
+import { parseLevel, tilt, status, starsFor, cloneState, GATES } from './engine.js';
+import { LEVELS, CHAPTER_SIZE, chapterOf, stageInChapter } from './levels.js';
+import { CHAPTERS, ENDING, PEOPLE } from './story.js';
+import { setScene } from './scenery.js';
 import { generatePuzzle, dateSeed } from './generator.js';
 import { createTiltDetector, SENSITIVITY, createFlowGate } from './motion.js';
 import { rollKeyframes, rollDuration } from './anim.js';
@@ -19,9 +21,9 @@ function loadProgress() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     const data = raw ? JSON.parse(raw) : {};
-    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full, sens: SENSITIVITY[data.sens] ? data.sens : 'normal', origin: data.origin || null, sound: data.sound !== false };
+    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full, sens: SENSITIVITY[data.sens] ? data.sens : 'normal', origin: data.origin || null, sound: data.sound !== false, seen: data.seen || {} };
   } catch {
-    return { best: {}, daily: {}, last: 0, motion: false, full: false, sens: 'normal', origin: null, sound: true };
+    return { best: {}, daily: {}, last: 0, motion: false, full: false, sens: 'normal', origin: null, sound: true, seen: {} };
   }
 }
 function saveProgress() {
@@ -64,7 +66,12 @@ function getDaily() {
 
 function levelDef(index) {
   const lv = LEVELS[index];
-  return { key: String(index), index, label: `${index + 1}단계`, name: lv.name, hint: lv.hint || '', par: lv.par, rows: lv.rows };
+  const ch = chapterOf(index);
+  return {
+    key: String(index), index, chapter: ch,
+    label: `${ch + 1}장 · ${stageInChapter(index) + 1}단계`,
+    name: lv.name, hint: lv.hint || '', par: lv.par, rows: lv.rows,
+  };
 }
 
 function bestFor(def) {
@@ -79,33 +86,65 @@ function unlockedCount() {
 
 // ---------- 메뉴 ----------
 function renderMenu() {
-  const grid = $('#level-grid');
-  grid.textContent = '';
+  const box = $('#chapters');
+  box.textContent = '';
   const unlocked = unlockedCount();
   let total = 0;
-  LEVELS.forEach((lv, i) => {
-    const best = progress.best[String(i)];
-    const stars = best != null ? starsFor(best, lv.par) : 0;
-    total += stars;
-    const li = document.createElement('li');
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'level-btn' + (i === unlocked - 1 && best == null ? ' current' : '');
-    b.disabled = i >= unlocked;
-    b.dataset.level = String(i);
-    b.setAttribute('aria-label', `${i + 1}단계 ${lv.name}${b.disabled ? ' (잠김)' : best != null ? `, 별 ${stars}개` : ''}`);
-    b.innerHTML = `<span class="n">${i + 1}</span><span class="s">${best != null ? [1, 2, 3].map((k) => `<i class="${k <= stars ? 'on' : ''}">●</i>`).join('') : ''}</span>`;
-    b.addEventListener('click', () => startLevel(levelDef(i)));
-    li.append(b);
-    grid.append(li);
+  CHAPTERS.forEach((chap, c) => {
+    const first = c * CHAPTER_SIZE;
+    const open = first < unlocked;
+    let chStars = 0;
+    let cleared = 0;
+    const sec = document.createElement('section');
+    sec.className = `chapter scene-${chap.scene}` + (open ? '' : ' locked');
+    sec.setAttribute('aria-label', `${chap.no}장 ${chap.title}`);
+    const grid = document.createElement('ol');
+    grid.className = 'level-grid';
+    for (let i = first; i < first + CHAPTER_SIZE; i++) {
+      const lv = LEVELS[i];
+      const best = progress.best[String(i)];
+      const stars = best != null ? starsFor(best, lv.par) : 0;
+      chStars += stars;
+      if (best != null) cleared++;
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'level-btn' + (i === unlocked - 1 && best == null ? ' current' : '');
+      b.disabled = i >= unlocked;
+      b.dataset.level = String(i);
+      b.setAttribute('aria-label', `${chap.no}장 ${stageInChapter(i) + 1}단계 ${lv.name}${b.disabled ? ' (잠김)' : best != null ? `, 별 ${stars}개` : ''}`);
+      b.innerHTML = `<span class="n">${stageInChapter(i) + 1}</span><span class="s">${best != null ? [1, 2, 3].map((k) => `<i class="${k <= stars ? 'on' : ''}">●</i>`).join('') : ''}</span>`;
+      b.addEventListener('click', () => startLevel(levelDef(i)));
+      li.append(b);
+      grid.append(li);
+    }
+    total += chStars;
+    const head = document.createElement('header');
+    head.className = 'chapter-head';
+    head.innerHTML = `<div><p class="chapter-no">${chap.no}장 · ${chap.place}</p><h3>${chap.title}</h3></div>
+      <p class="chapter-meta">${open ? `${cleared}/${CHAPTER_SIZE} · ★ ${chStars}` : '앞 장을 마치면 열려요'}</p>`;
+    if (open) {
+      const replay = document.createElement('button');
+      replay.type = 'button';
+      replay.className = 'btn btn-small';
+      replay.textContent = cleared === CHAPTER_SIZE ? '이야기·편지 다시 보기' : '이야기 다시 보기';
+      replay.addEventListener('click', () => {
+        const lines = cleared === CHAPTER_SIZE ? [...chap.intro, { letter: chap.letter }] : chap.intro;
+        playStory(chap, lines, () => showScreen('menu'), '닫기');
+      });
+      head.append(replay);
+    }
+    sec.append(head, grid);
+    box.append(sec);
   });
   $('#star-total').textContent = `★ ${total} / ${LEVELS.length * 3}`;
   const next = Math.min(unlocked - 1, LEVELS.length - 1);
-  $('#btn-continue').textContent = progress.best['0'] == null ? '시작하기' : `이어서 하기 · ${next + 1}단계`;
+  $('#btn-continue').textContent = progress.best['0'] == null ? '이야기 시작하기' : `이어서 하기 · ${chapterOf(next) + 1}장 ${stageInChapter(next) + 1}단계`;
   $('#btn-continue').onclick = () => startLevel(levelDef(next));
   const d = getDaily();
   const dBest = progress.daily[d.seed];
   $('#daily-label').textContent = dBest != null ? `완료 ${dBest}수` : `최소 ${d.par}수`;
+  setScene($('#scenery'), CHAPTERS[chapterOf(next)].scene);
 }
 
 function showScreen(name) {
@@ -116,7 +155,14 @@ function showScreen(name) {
 }
 
 // ---------- 퍼즐판 그리기 ----------
-function startLevel(def) {
+function startLevel(def, { skipStory = false } = {}) {
+  // 각 장의 첫 단계를 처음 열 때는 그 장의 이야기를 먼저 보여 준다
+  if (!skipStory && def.index != null && stageInChapter(def.index) === 0 && !storySeen(`intro-${def.chapter}`) && !window.__TILT_SKIP_STORY) {
+    const chap = CHAPTERS[def.chapter];
+    playStory(chap, chap.intro, () => { markSeen(`intro-${def.chapter}`); startLevel(def, { skipStory: true }); });
+    return;
+  }
+  setScene($('#scenery'), def.chapter != null ? CHAPTERS[def.chapter].scene : CHAPTERS[0].scene);
   const { level, state } = parseLevel(def.rows);
   Object.assign(game, { def, level, initial: state, state: cloneState(state), history: [], moves: 0, animating: false, queued: null, ended: false });
   if (def.index != null) { progress.last = def.index; saveProgress(); }
@@ -147,6 +193,7 @@ function buildBoard() {
       el.className = 'cell';
       if (c === '#') el.classList.add('wall');
       else if (c === '*') el.classList.add('pit');
+      else if (GATES[c]) el.classList.add('gate', `c-${GATES[c]}`);
       else el.classList.add('hole', `c-${c.toLowerCase()}`);
       el.dataset.idx = String(y * level.w + x);
       el.style.left = `calc(${x} * var(--cell))`;
@@ -328,12 +375,26 @@ function finish(st) {
       saveProgress();
     }
     const actions = [];
-    if (!isDaily && def.index < LEVELS.length - 1) actions.push(['다음 단계', 'btn-primary', () => startLevel(levelDef(def.index + 1))]);
+    const chapterEnd = !isDaily && stageInChapter(def.index) === CHAPTER_SIZE - 1;
+    if (chapterEnd) {
+      // 장의 마지막 단계: 할아버지 편지 → (마지막 장이면 결말) → 다음 장
+      const chap = CHAPTERS[def.chapter];
+      const isLast = def.index === LEVELS.length - 1;
+      const lines = isLast ? [{ letter: chap.letter }, ...ENDING] : [{ letter: chap.letter }];
+      actions.push([isLast ? '할아버지의 마지막 편지' : '할아버지의 편지 읽기', 'btn-primary', () => {
+        hideOverlay();
+        playStory(chap, lines, () => {
+          markSeen(`letter-${def.chapter}`);
+          if (isLast) showScreen('menu');
+          else startLevel(levelDef(def.index + 1));
+        }, isLast ? '처음 화면으로' : '다음 장으로');
+      }]);
+    } else if (!isDaily && def.index < LEVELS.length - 1) actions.push(['다음 단계', 'btn-primary', () => startLevel(levelDef(def.index + 1))]);
     actions.push(['다시 하기', '', restart]);
     actions.push(['단계 목록', '', () => { hideOverlay(); showScreen('menu'); }]);
     const record = prev != null && game.moves < prev ? ' · 새 기록' : '';
     const msg = !isDaily && def.index === LEVELS.length - 1
-      ? `${game.moves}수 만에 마지막 단계를 풀었습니다. 최소 ${def.par}수${record}`
+      ? `${game.moves}수 만에 할아버지의 마지막 판을 풀었습니다. 최소 ${def.par}수${record}`
       : `${game.moves}수 만에 성공 · 최소 ${def.par}수${record}`;
     playWin(stars);
     showOverlay({ title: stars === 3 ? '완벽해요!' : '완성!', text: msg, stars, actions, lost: false });
@@ -599,6 +660,68 @@ $('#btn-full').addEventListener('click', () => {
 }));
 setFullButton();
 
+// ---------- 이야기 장면 ----------
+function storySeen(key) { return !!progress.seen[key]; }
+function markSeen(key) { progress.seen[key] = true; saveProgress(); }
+
+const story = { lines: [], i: 0, done: null };
+/** 이야기 재생. lines: 대사({who,text}) 또는 편지({letter}) 목록. 끝나면 done() */
+function playStory(chap, lines, done, finalLabel = '시작하기') {
+  hideOverlay();
+  setScene($('#scenery'), chap.scene);
+  $('#menu').hidden = true;
+  $('#game').hidden = true;
+  $('#story-place').textContent = `${chap.no}장 · ${chap.title} — ${chap.place}`;
+  Object.assign(story, { lines, i: 0, done, finalLabel });
+  $('#story').hidden = false;
+  showStoryLine();
+  $('#story-next').focus();
+}
+function showStoryLine() {
+  const line = story.lines[story.i];
+  const isLetter = !!line.letter;
+  $('#story-card').hidden = isLetter;
+  $('#letter').hidden = !isLetter;
+  if (isLetter) {
+    $('#letter-title').textContent = line.letter.title;
+    $('#letter-body').innerHTML = line.letter.body.map((t) => `<p>${t}</p>`).join('');
+    $('#letter-sign').textContent = `— ${line.letter.sign}`;
+  } else {
+    const who = PEOPLE[line.who] || PEOPLE.narr;
+    const card = $('#story-card');
+    card.dataset.who = line.who;
+    $('#story-name').textContent = who.name;
+    $('#story-avatar').textContent = who.initial;
+    $('#story-avatar').hidden = !who.initial;
+    $('#story-text').textContent = line.text;
+    card.classList.remove('enter');
+    void card.offsetWidth;
+    card.classList.add('enter');
+  }
+  const last = story.i === story.lines.length - 1;
+  $('#story-next').textContent = last ? story.finalLabel : '다음';
+  $('#story-skip').hidden = last;
+}
+function nextStoryLine() {
+  if ($('#story').hidden) return;
+  if (story.i < story.lines.length - 1) { story.i++; showStoryLine(); playClick(); return; }
+  endStory();
+}
+function endStory() {
+  $('#story').hidden = true;
+  const done = story.done;
+  story.done = null;
+  if (done) done();
+}
+$('#story-next').addEventListener('click', (e) => { e.stopPropagation(); nextStoryLine(); });
+$('#story-skip').addEventListener('click', (e) => { e.stopPropagation(); endStory(); });
+$('#story').addEventListener('click', (e) => { if (!e.target.closest('button')) nextStoryLine(); });
+document.addEventListener('keydown', (e) => {
+  if ($('#story').hidden) return;
+  if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowRight') { e.preventDefault(); nextStoryLine(); }
+  else if (e.key === 'Escape') endStory();
+});
+
 // ---------- 소리 ----------
 // 브라우저는 사용자가 누르기 전에는 소리를 못 내므로, 첫 탭·키 입력에서 오디오를 준비한다
 ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => unlockAudio(), { capture: true }));
@@ -626,6 +749,7 @@ window.__tilt = {
   sound: () => ({ ...soundStats, enabled: soundEnabled() }),
   info: () => ({ key: game.def?.key, moves: game.moves, status: game.state ? status(game.state) : null, animating: game.animating, par: game.def?.par }),
   rows: () => game.def?.rows,
+  story: () => ({ open: !$('#story').hidden, i: story.i, n: story.lines.length }),
 };
 
 renderMenu();

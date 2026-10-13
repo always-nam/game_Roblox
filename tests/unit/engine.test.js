@@ -129,3 +129,19 @@ test('별 개수 계산', () => {
   assert.equal(starsFor(13, 10), 2);
   assert.equal(starsFor(14, 10), 1);
 });
+
+test('색깔 문: 같은 색 구슬은 지나가고, 다른 색 구슬과 돌은 막힌다', () => {
+  // 빨간 구슬은 빨간 문(1)을 지나 구멍으로, 파란 구슬은 문 앞에서 멈춘다
+  const { state } = run(['r.1.R', 'b.1.B'], ['right']);
+  assert.equal(pos(state, 0).gone, true);
+  assert.equal(pos(state, 1).x, 1);
+  const { state: s2 } = run(['o.3..', 'b...B'], ['right']);
+  assert.equal(pos(s2, 0).x, 1);                 // 돌은 문 앞에서 멈춤
+});
+
+test('색깔 문 위에 멈출 수 있고, 그 위의 구슬은 다른 조각을 막는다', () => {
+  const { state } = run(['r2#R'], ['right']);
+  assert.equal(pos(state, 0).x, 0);              // 빨간 구슬: 초록 문(2)은 벽
+  const g = run(['g2#G', 'b...B'], ['right']).state;
+  assert.equal(pos(g, 0).x, 1);                  // 초록 구슬: 문 위로 올라가 벽 앞에서 멈춤
+});

@@ -15,6 +15,8 @@ async function waitIdle(page) {
 
 test.beforeEach(async ({ page }) => {
   page.on('pageerror', (e) => { throw e; });
+  // 이야기 장면 자동 재생은 이야기 전용 테스트에서만 확인한다
+  await page.addInitScript(() => { if (!sessionStorage.getItem('story-on')) window.__TILT_SKIP_STORY = true; });
   await page.goto('index.html');
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -22,7 +24,7 @@ test.beforeEach(async ({ page }) => {
 
 test('메뉴가 열리고 1단계만 잠금 해제되어 있다', async ({ page }) => {
   await expect(page.locator('#menu-title')).toBeVisible();
-  await expect(page.locator('.level-btn')).toHaveCount(16);
+  await expect(page.locator('.level-btn')).toHaveCount(32);
   await expect(page.locator('.level-btn').first()).toBeEnabled();
   await expect(page.locator('.level-btn').nth(1)).toBeDisabled();
 });
@@ -37,7 +39,7 @@ test('키보드로 1단계를 최소 수로 풀면 별 3개가 나오고 2단계
   await expect(page.locator('#overlay')).toBeVisible();
   await expect(page.locator('#dlg-stars span.on')).toHaveCount(3);
   await page.getByRole('button', { name: '다음 단계' }).click();
-  await expect(page.locator('#hud-num')).toHaveText('2단계');
+  await expect(page.locator('#hud-num')).toHaveText('1장 · 2단계');
   await page.locator('#btn-menu').click();
   await expect(page.locator('.level-btn').nth(1)).toBeEnabled();
 });
@@ -108,22 +110,28 @@ test('오늘의 퍼즐이 열리고 자동 풀이로 완료할 수 있다', asyn
   await expect(page.locator('#daily-label')).toContainText('완료');
 });
 
-test('16단계 전체를 브라우저에서 순서대로 풀 수 있다', async ({ page }) => {
-  test.setTimeout(180_000);
+test('32단계(4장) 전체를 브라우저에서 순서대로 풀 수 있다', async ({ page }) => {
+  test.setTimeout(240_000);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.reload();
   await page.locator('#btn-continue').click();
   for (let i = 0; i < LEVELS.length; i++) {
-    await expect(page.locator('#hud-num')).toHaveText(`${i + 1}단계`);
+    await expect(page.locator('#hud-num')).toHaveText(`${Math.floor(i / 8) + 1}장 · ${(i % 8) + 1}단계`);
     for (const d of solutionFor(LEVELS[i].rows)) {
       await page.keyboard.press(KEYS[d]);
       await waitIdle(page);
     }
     await expect(page.locator('#overlay')).toBeVisible();
-    if (i < LEVELS.length - 1) await page.getByRole('button', { name: '다음 단계' }).click();
+    if (i % 8 === 7) {
+      await page.locator('#dlg-actions .btn-primary').click();      // 할아버지 편지
+      await expect(page.locator('#letter')).toBeVisible();
+      while (await page.locator('#story').isVisible()) await page.locator('#story-next').click();
+    } else {
+      await page.getByRole('button', { name: '다음 단계' }).click();
+    }
   }
-  await page.getByRole('button', { name: '단계 목록', exact: true }).click();
-  await expect(page.locator('#star-total')).toHaveText('★ 48 / 48');
+  await expect(page.locator('#menu')).toBeVisible();
+  await expect(page.locator('#star-total')).toHaveText('★ 96 / 96');
 });
 
 test('가로 스크롤이 없고 판이 화면 안에 들어온다', async ({ page }) => {
@@ -466,4 +474,71 @@ test('소리 버튼으로 끄면 소리가 나지 않고, 설정이 저장된다
   await page.reload();
   await page.locator('.level-btn').first().click();
   await expect(page.locator('#btn-sound')).toHaveAttribute('aria-pressed', 'false');
+});
+
+// ---------- 스토리 모드 ----------
+async function storyOn(page) {
+  await page.evaluate(() => sessionStorage.setItem('story-on', '1'));
+  await page.reload();
+}
+
+test('[스토리] 처음 시작하면 1장 이야기가 나오고, 끝까지 넘기면 1장 1단계가 시작된다', async ({ page }) => {
+  await storyOn(page);
+  await expect(page.locator('#btn-continue')).toHaveText('이야기 시작하기');
+  await page.locator('#btn-continue').click();
+  await expect(page.locator('#story')).toBeVisible();
+  await expect(page.locator('#story-place')).toContainText('1장 · 다락방의 상자');
+  await expect(page.locator('#story-text')).toContainText('여름방학');
+  expect(await page.evaluate(() => document.documentElement.dataset.scene)).toBe('attic');
+  for (let k = 0; k < 4; k++) await page.locator('#story-next').click();
+  await expect(page.locator('#story-next')).toHaveText('시작하기');
+  await page.locator('#story-next').click();
+  await expect(page.locator('#game')).toBeVisible();
+  await expect(page.locator('#hud-num')).toHaveText('1장 · 1단계');
+  // 이미 본 이야기는 다시 나오지 않는다
+  await page.locator('#btn-menu').click();
+  await page.locator('.level-btn').first().click();
+  await expect(page.locator('#game')).toBeVisible();
+  await expect(page.locator('#story')).toBeHidden();
+});
+
+test('[스토리] 장의 마지막 단계를 풀면 할아버지 편지 → 다음 장 이야기 → 다음 장 배경으로 이어진다', async ({ page }) => {
+  await storyOn(page);
+  await page.evaluate(() => localStorage.setItem('tilt-marble-v1', JSON.stringify({
+    best: Object.fromEntries([...Array(7)].map((_, i) => [i, 50])), seen: { 'intro-0': true },
+  })));
+  await page.reload();
+  await page.locator('.level-btn').nth(7).click();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  for (const d of solutionFor(LEVELS[7].rows)) { await page.keyboard.press(KEYS[d]); await waitIdle(page); }
+  await page.getByRole('button', { name: '할아버지의 편지 읽기' }).click();
+  await expect(page.locator('#letter-title')).toHaveText('첫 번째 편지');
+  await expect(page.locator('#letter-body')).toContainText('대청마루');
+  await page.locator('#story-next').click();
+  await expect(page.locator('#story-place')).toContainText('2장 · 여름 대청마루');
+  expect(await page.evaluate(() => document.documentElement.dataset.scene)).toBe('summer');
+  await page.locator('#story-skip').click();
+  await expect(page.locator('#hud-num')).toHaveText('2장 · 1단계');
+});
+
+test('[스토리] 앞 장을 마치지 않으면 다음 장은 잠겨 있고, 열린 장은 이야기를 다시 볼 수 있다', async ({ page }) => {
+  await storyOn(page);
+  await expect(page.locator('.chapter').nth(0)).not.toHaveClass(/locked/);
+  await expect(page.locator('.chapter').nth(1)).toHaveClass(/locked/);
+  await expect(page.locator('.level-btn').nth(8)).toBeDisabled();
+  await page.locator('.chapter').nth(0).getByRole('button', { name: '이야기 다시 보기' }).click();
+  await expect(page.locator('#story')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#menu')).toBeVisible();
+});
+
+test('[스토리] 4장에는 색깔 문이 그려지고 겨울 공방 배경이 나온다', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('tilt-marble-v1', JSON.stringify({
+    best: Object.fromEntries([...Array(24)].map((_, i) => [i, 50])),
+  })));
+  await page.reload();
+  await page.locator('.level-btn').nth(24).click();
+  await expect(page.locator('#hud-num')).toHaveText('4장 · 1단계');
+  await expect(page.locator('.cell.gate')).toHaveCount(1);
+  expect(await page.evaluate(() => document.documentElement.dataset.scene)).toBe('winter');
 });

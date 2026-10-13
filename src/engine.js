@@ -5,6 +5,7 @@
 //   r g b y  색 구슬   R G B Y  같은 색 구멍
 //   o  돌(굴러가지만 구멍에 빠지지 않음, 함정을 메울 수 있음)
 //   *  함정(구슬이 빠지면 실패, 돌이 빠지면 메워져 바닥이 됨)
+//   1 2 3 4  색깔 문(빨강·초록·파랑·노랑): 같은 색 구슬만 지나가고, 다른 구슬과 돌에게는 벽
 
 export const DIRS = {
   up: { dx: 0, dy: -1 },
@@ -14,6 +15,14 @@ export const DIRS = {
 };
 export const DIR_NAMES = ['up', 'down', 'left', 'right'];
 export const COLORS = ['r', 'g', 'b', 'y'];
+export const GATES = { 1: 'r', 2: 'g', 3: 'b', 4: 'y' };
+
+/** 이 조각이 이 칸에 들어갈 수 없는가(벽, 또는 색이 다른 색깔 문) */
+export function blocks(c, piece) {
+  if (c === '#') return true;
+  const gate = GATES[c];
+  return gate !== undefined && !(piece.kind === 'marble' && piece.color === gate);
+}
 
 export function parseLevel(rows) {
   const h = rows.length;
@@ -30,7 +39,7 @@ export function parseLevel(rows) {
       } else if (ch === 'o') {
         cells.push('.');
         pieces.push({ id: id++, kind: 'stone', color: null, x, y });
-      } else if (ch === '#' || ch === '.' || ch === '*' || COLORS.includes(ch.toLowerCase())) {
+      } else if (ch === '#' || ch === '.' || ch === '*' || GATES[ch] || COLORS.includes(ch.toLowerCase())) {
         cells.push(ch);
       } else {
         throw new Error(`알 수 없는 레벨 문자 '${ch}' (${x},${y})`);
@@ -93,7 +102,7 @@ export function tilt(level, state, dirName) {
       const ny = p.y + dir.dy;
       const c = cellAt(level, nx, ny);
       const idx = ny * level.w + nx;
-      if (c === '#' || occupied.has(idx)) break;
+      if (blocks(c, p) || occupied.has(idx)) break;
       p.x = nx;
       p.y = ny;
       path.push({ x: nx, y: ny });

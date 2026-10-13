@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { LEVELS } from '../../src/levels.js';
 import { parseLevel, solve, tilt, status } from '../../src/engine.js';
 
-test('레벨이 16개이고 이름이 겹치지 않는다', () => {
-  assert.equal(LEVELS.length, 16);
+test('레벨이 32개(4장 × 8단계)이고 이름이 겹치지 않는다', () => {
+  assert.equal(LEVELS.length, 32);
   assert.equal(new Set(LEVELS.map((l) => l.name)).size, LEVELS.length);
 });
 
@@ -25,4 +25,11 @@ LEVELS.forEach((lv, i) => {
 test('par는 대체로 증가한다 (난이도 곡선)', () => {
   const pars = LEVELS.map((l) => l.par);
   assert.ok(pars[pars.length - 1] >= Math.max(...pars.slice(0, 6)) * 2);
+});
+
+test('4장(25~32단계)에는 색깔 문이 있고, 그 전에는 없다', () => {
+  LEVELS.forEach((lv, i) => {
+    const hasGate = lv.rows.some((r) => /[1-4]/.test(r));
+    assert.equal(hasGate, i >= 24, `${i + 1}단계 ${lv.name}`);
+  });
 });
