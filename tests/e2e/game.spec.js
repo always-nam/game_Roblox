@@ -619,23 +619,27 @@ test('[S26 사례] 기기의 \'움직임 줄이기\'가 켜져 있어도 구슬�
   await page.reload();
   expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
   await page.locator('.level-btn').first().click();
-  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');            // 1단계: 구슬이 1칸 → 3칸으로 굴러간다
+  // 화면 갱신 속도(테스트 기계 부하)와 무관하게, 굴러가기 애니메이션을 25·50·75% 지점에 멈춰 위치를 잰다
   const info = await page.evaluate(() => {
-    const move = document.querySelector('.piece.marble').getAnimations().find((x) => !(x instanceof CSSTransition));
-    return { duration: move.effect.getTiming().duration, frames: move.effect.getKeyframes().length };
+    const el = document.querySelector('.piece.marble');
+    const cell = parseFloat(getComputedStyle(document.getElementById('app')).getPropertyValue('--cell'));
+    const move = el.getAnimations().find((x) => !(x instanceof CSSTransition));
+    const duration = move.effect.getTiming().duration;
+    move.pause();
+    const at = [0.25, 0.5, 0.75].map((f) => {
+      move.currentTime = duration * f;
+      return new DOMMatrix(getComputedStyle(el).transform).m42 / cell;
+    });
+    move.play();
+    return { duration, frames: move.effect.getKeyframes().length, at };
   });
   expect(info.duration).toBeGreaterThanOrEqual(300);   // 굴러가는 시간은 그대로
   expect(info.frames).toBe(2);                          // 튕김·찌그러짐(꾸밈)만 생략
-  // 중간 지점에서 구슬이 출발점과 도착점 사이에 있다(순간이동 아님)
-  await page.waitForTimeout(info.duration * 0.6);
-  const mid = await page.evaluate(() => {
-    const el = document.querySelector('.piece.marble');
-    const m = new DOMMatrix(getComputedStyle(el).transform);
-    const cell = parseFloat(getComputedStyle(document.getElementById('app')).getPropertyValue('--cell'));
-    return m.m42 / cell;
-  });
-  expect(mid).toBeGreaterThan(1.05);
-  expect(mid).toBeLessThan(2.95);
+  for (const y of info.at) { expect(y).toBeGreaterThan(1.02); expect(y).toBeLessThan(2.98); }
+  expect(info.at[0]).toBeLessThan(info.at[1]);          // 점점 빨라지며 앞으로
+  expect(info.at[1]).toBeLessThan(info.at[2]);
+  expect(info.at[2] - info.at[1]).toBeGreaterThan(info.at[1] - info.at[0]);   // 가속(등가속 구르기)
   await waitIdle(page);
   await expect(page.locator('#hud-moves')).toHaveText('1');
 });
