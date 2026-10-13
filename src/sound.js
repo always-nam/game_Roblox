@@ -7,6 +7,7 @@
 let ctx = null;
 let master = null;
 let noise = null;
+let bus = null;      // 효과음·배경음악이 함께 나가는 마지막 단(압축기)
 let enabled = true;
 export const soundStats = { roll: 0, hit: 0, hole: 0, pit: 0, plug: 0, win: 0, lose: 0, click: 0, bump: 0 };
 
@@ -25,8 +26,9 @@ export function unlockAudio() {
       ctx = new AC();
       master = ctx.createGain();
       master.gain.value = enabled ? 0.8 : 0;
-      const comp = ctx.createDynamicsCompressor();   // 여러 구슬 소리가 겹쳐도 찢어지지 않게
-      master.connect(comp).connect(ctx.destination);
+      bus = ctx.createDynamicsCompressor();   // 여러 구슬 소리가 겹쳐도 찢어지지 않게
+      bus.connect(ctx.destination);
+      master.connect(bus);
       const len = Math.floor(ctx.sampleRate * 1.5);
       noise = ctx.createBuffer(1, len, ctx.sampleRate);
       const d = noise.getChannelData(0);
@@ -36,6 +38,11 @@ export function unlockAudio() {
     if (ctx.state === 'suspended') ctx.resume();
     return true;
   } catch { return false; }
+}
+
+/** 배경음악용: 준비된 오디오 출력(없으면 null). 효과음 켜기/끄기와 따로 쓰도록 bus에 직접 연결 */
+export function audioOut() {
+  return ctx && bus ? { ctx, out: bus, noise } : null;
 }
 
 const ready = () => enabled && ctx && master;

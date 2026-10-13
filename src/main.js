@@ -2,7 +2,9 @@
 import { parseLevel, tilt, status, starsFor, cloneState, GATES } from './engine.js';
 import { LEVELS, CHAPTER_SIZE, chapterOf, stageInChapter } from './levels.js';
 import { CHAPTERS, ENDING, PEOPLE } from './story.js';
-import { setScene } from './scenery.js';
+import { setScene, sceneSVG } from './scenery.js';
+import { playMusic, setMusicEnabled, musicEnabled, musicInfo } from './music.js';
+import { createTitleDemo } from './title.js';
 import { generatePuzzle, dateSeed } from './generator.js';
 import { createTiltDetector, SENSITIVITY, createFlowGate } from './motion.js';
 import { rollKeyframes, rollDuration } from './anim.js';
@@ -21,9 +23,9 @@ function loadProgress() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     const data = raw ? JSON.parse(raw) : {};
-    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full, sens: SENSITIVITY[data.sens] ? data.sens : 'normal', origin: data.origin || null, sound: data.sound !== false, seen: data.seen || {} };
+    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full, sens: SENSITIVITY[data.sens] ? data.sens : 'normal', origin: data.origin || null, sound: data.sound !== false, music: data.music !== false, seen: data.seen || {} };
   } catch {
-    return { best: {}, daily: {}, last: 0, motion: false, full: false, sens: 'normal', origin: null, sound: true, seen: {} };
+    return { best: {}, daily: {}, last: 0, motion: false, full: false, sens: 'normal', origin: null, sound: true, music: true, seen: {} };
   }
 }
 function saveProgress() {
@@ -97,6 +99,8 @@ function renderMenu() {
     let cleared = 0;
     const sec = document.createElement('section');
     sec.className = `chapter scene-${chap.scene}` + (open ? '' : ' locked');
+    sec.dataset.scene = chap.scene;
+    sec.dataset.chapter = String(c);
     sec.setAttribute('aria-label', `${chap.no}장 ${chap.title}`);
     const grid = document.createElement('ol');
     grid.className = 'level-grid';
@@ -119,10 +123,15 @@ function renderMenu() {
       grid.append(li);
     }
     total += chStars;
+    const art = document.createElement('div');
+    art.className = 'chapter-art';
+    art.innerHTML = `${sceneSVG(chap.scene)}<span class="chapter-num">${chap.no}</span>
+      <span class="chapter-progress">${Array.from({ length: CHAPTER_SIZE }, (_, k) => `<i class="${progress.best[String(first + k)] != null ? 'on' : ''}"></i>`).join('')}</span>
+      ${open ? '' : '<span class="chapter-lock">앞 장을 마치면 열려요</span>'}`;
     const head = document.createElement('header');
     head.className = 'chapter-head';
     head.innerHTML = `<div><p class="chapter-no">${chap.no}장 · ${chap.place}</p><h3>${chap.title}</h3></div>
-      <p class="chapter-meta">${open ? `${cleared}/${CHAPTER_SIZE} · ★ ${chStars}` : '앞 장을 마치면 열려요'}</p>`;
+      <p class="chapter-meta">${open ? `${cleared}/${CHAPTER_SIZE} · ★ ${chStars}` : '잠김'}</p>`;
     if (open) {
       const replay = document.createElement('button');
       replay.type = 'button';
@@ -134,9 +143,11 @@ function renderMenu() {
       });
       head.append(replay);
     }
-    sec.append(head, grid);
+    sec.append(art, head, grid);
     box.append(sec);
   });
+  // 장 점 표시(휴대폰 가로 넘김용)
+  $('#chapter-dots').innerHTML = CHAPTERS.map((_, c) => `<i data-c="${c}"></i>`).join('');
   $('#star-total').textContent = `★ ${total} / ${LEVELS.length * 3}`;
   const next = Math.min(unlocked - 1, LEVELS.length - 1);
   $('#btn-continue').textContent = progress.best['0'] == null ? '이야기 시작하기' : `이어서 하기 · ${chapterOf(next) + 1}장 ${stageInChapter(next) + 1}단계`;
@@ -144,15 +155,93 @@ function renderMenu() {
   const d = getDaily();
   const dBest = progress.daily[d.seed];
   $('#daily-label').textContent = dBest != null ? `완료 ${dBest}수` : `최소 ${d.par}수`;
-  setScene($('#scenery'), CHAPTERS[chapterOf(next)].scene);
+  // 이어서 할 장으로 넘겨 두고, 그 장의 배경을 보여 준다
+  const focus = chapterOf(next);
+  const card = box.children[focus];
+  if (card && box.scrollWidth > box.clientWidth) box.scrollLeft = card.offsetLeft - (box.clientWidth - card.clientWidth) / 2;
+  focusChapter(focus);
 }
 
+function focusChapter(c) {
+  setScene($('#scenery'), CHAPTERS[c].scene);
+  document.querySelectorAll('#chapter-dots i').forEach((d, k) => d.classList.toggle('on', k === c));
+  document.querySelectorAll('#chapters .chapter').forEach((el, k) => el.classList.toggle('focus', k === c));
+}
+// 휴대폰에서 장 카드를 옆으로 넘기면 배경이 그 장으로 바뀐다
+let chapterScrollRaf = 0;
+$('#chapters').addEventListener('scroll', () => {
+  cancelAnimationFrame(chapterScrollRaf);
+  chapterScrollRaf = requestAnimationFrame(() => {
+    const box = $('#chapters');
+    if (box.scrollWidth <= box.clientWidth) return;
+    const mid = box.scrollLeft + box.clientWidth / 2;
+    let best = 0;
+    [...box.children].forEach((el, k) => {
+      if (Math.abs(el.offsetLeft + el.clientWidth / 2 - mid) < Math.abs(box.children[best].offsetLeft + box.children[best].clientWidth / 2 - mid)) best = k;
+    });
+    focusChapter(best);
+  });
+});
+
+// 화면: title(시작 화면) → menu(장 선택) → game. 장면마다 배경과 음악이 따라 바뀐다
 function showScreen(name) {
+  $('#title').hidden = name !== 'title';
   $('#menu').hidden = name !== 'menu';
   $('#game').hidden = name !== 'game';
-  if (name === 'menu') renderMenu();
-  else layoutBoard();
+  if (name === 'title') startTitle(); else stopTitle();
+  if (name === 'menu') { renderMenu(); playMusic('title'); }
+  else if (name === 'game') {
+    layoutBoard();
+    playMusic(game.def?.chapter != null ? CHAPTERS[game.def.chapter].scene : 'attic');
+  }
 }
+
+// ---------- 시작 화면(모션 그래픽) ----------
+// 나무 글자 조각이 떨어지고, 구슬 네 개가 굴러와 구멍에 들어가고, 가운데 판은 퍼즐을 스스로 푼다.
+// 배경은 다락방 → 여름 → 가을 → 겨울로 천천히 바뀐다.
+const titleDemo = createTitleDemo({ board: $('#demo-board'), frame: $('#demo-frame'), rows: LEVELS[10].rows });
+const SEASONS = ['attic', 'summer', 'autumn', 'winter'];
+let seasonTimer = 0;
+let seasonIdx = 0;
+function startTitle() {
+  const t = $('#title');
+  t.classList.remove('play');
+  void t.offsetWidth;
+  t.classList.add('play');
+  seasonIdx = 0;
+  setScene($('#scenery'), SEASONS[0]);
+  clearInterval(seasonTimer);
+  seasonTimer = setInterval(() => { seasonIdx = (seasonIdx + 1) % SEASONS.length; setScene($('#scenery'), SEASONS[seasonIdx]); }, 6500);
+  titleDemo.start();
+  playMusic('title');
+}
+function stopTitle() {
+  clearInterval(seasonTimer);
+  seasonTimer = 0;
+  titleDemo.stop();
+}
+function leaveTitle() {
+  if ($('#title').hidden) return;
+  unlockAudio();
+  if (progress.full && fullscreenSupported() && !fullscreenElement()) enterFullscreen();
+  showScreen('menu');
+  playMusic('title');
+}
+$('#btn-start').addEventListener('click', (e) => { e.stopPropagation(); leaveTitle(); });
+$('#title').addEventListener('click', leaveTitle);
+document.addEventListener('keydown', (e) => { if (!$('#title').hidden && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); leaveTitle(); } });
+// 기울기·마우스에 따라 제목이 살짝 기울어지는 시차 효과
+document.addEventListener('pointermove', (e) => {
+  if ($('#title').hidden) return;
+  const x = e.clientX / window.innerWidth - 0.5;
+  const y = e.clientY / window.innerHeight - 0.5;
+  $('#title').style.setProperty('--px', x.toFixed(3));
+  $('#title').style.setProperty('--py', y.toFixed(3));
+});
+$('#btn-title').addEventListener('click', () => showScreen('title'));
+$('#btn-howto').addEventListener('click', () => { $('#howto').hidden = false; $('#howto-close').focus(); });
+$('#howto-close').addEventListener('click', () => { $('#howto').hidden = true; });
+$('#howto').addEventListener('click', (e) => { if (e.target === $('#howto')) $('#howto').hidden = true; });
 
 // ---------- 퍼즐판 그리기 ----------
 function startLevel(def, { skipStory = false } = {}) {
@@ -471,7 +560,7 @@ $('#btn-undo').addEventListener('click', undo);
 $('#btn-restart').addEventListener('click', restart);
 $('#btn-menu').addEventListener('click', () => { hideOverlay(); showScreen('menu'); });
 $('#btn-daily').addEventListener('click', () => startLevel(getDaily()));
-window.addEventListener('resize', layoutBoard);
+window.addEventListener('resize', () => { layoutBoard(); titleDemo.layout(); });
 if (window.ResizeObserver) new ResizeObserver(layoutBoard).observe(area);
 
 // ---------- 휴대폰 기울기 조작 ----------
@@ -668,7 +757,10 @@ const story = { lines: [], i: 0, done: null };
 /** 이야기 재생. lines: 대사({who,text}) 또는 편지({letter}) 목록. 끝나면 done() */
 function playStory(chap, lines, done, finalLabel = '시작하기') {
   hideOverlay();
+  stopTitle();
   setScene($('#scenery'), chap.scene);
+  playMusic(chap.scene);
+  $('#title').hidden = true;
   $('#menu').hidden = true;
   $('#game').hidden = true;
   $('#story-place').textContent = `${chap.no}장 · ${chap.title} — ${chap.place}`;
@@ -728,8 +820,24 @@ document.addEventListener('keydown', (e) => {
 function setSoundButton() {
   const b = $('#btn-sound');
   b.setAttribute('aria-pressed', String(progress.sound));
-  b.setAttribute('aria-label', progress.sound ? '소리 끄기' : '소리 켜기');
+  b.setAttribute('aria-label', progress.sound ? '효과음 끄기' : '효과음 켜기');
+  const m = $('#btn-music');
+  m.setAttribute('aria-pressed', String(progress.music));
+  m.setAttribute('aria-label', progress.music ? '음악 끄기' : '음악 켜기');
 }
+function toggleMusic() {
+  progress.music = !progress.music;
+  saveProgress();
+  setMusicEnabled(progress.music);
+  setSoundButton();
+}
+$('#btn-music').addEventListener('click', toggleMusic);
+document.addEventListener('keydown', (e) => { if ((e.key === 'b' || e.key === 'B') && !e.ctrlKey && !e.metaKey) toggleMusic(); });
+// 첫 입력에서 오디오가 준비되면, 그때 보고 있는 화면의 음악을 시작한다
+['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => {
+  const w = musicInfo().want;
+  if (w && !musicInfo().playing) playMusic(w);
+}));
 function toggleSound() {
   progress.sound = !progress.sound;
   saveProgress();
@@ -741,18 +849,21 @@ $('#btn-sound').addEventListener('click', toggleSound);
 document.addEventListener('keydown', (e) => { if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey) toggleSound(); });
 document.addEventListener('click', (e) => { if (e.target.closest('.btn, .level-btn, .sens button')) playClick(); });
 setSoundEnabled(progress.sound);
+setMusicEnabled(progress.music);
 setSoundButton();
 
 // 자동 테스트용 읽기 전용 정보
 window.__tilt = {
   motion: () => ({ supported: motion.supported, on: motion.on }),
   sound: () => ({ ...soundStats, enabled: soundEnabled() }),
+  music: () => ({ ...musicInfo(), enabled: musicEnabled() }),
+  demo: () => ({ running: titleDemo.running, steps: titleDemo.steps }),
   info: () => ({ key: game.def?.key, moves: game.moves, status: game.state ? status(game.state) : null, animating: game.animating, par: game.def?.par }),
   rows: () => game.def?.rows,
   story: () => ({ open: !$('#story').hidden, i: story.i, n: story.lines.length }),
 };
 
-renderMenu();
+showScreen(window.__TILT_SKIP_TITLE ? 'menu' : 'title');
 
 // 앱 설치(PWA)·오프라인 실행: 매니페스트가 있는 정식 페이지에서만 서비스 워커를 등록한다
 if ('serviceWorker' in navigator && document.querySelector('link[rel="manifest"]')) {

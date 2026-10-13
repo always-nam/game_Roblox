@@ -16,7 +16,10 @@ async function waitIdle(page) {
 test.beforeEach(async ({ page }) => {
   page.on('pageerror', (e) => { throw e; });
   // 이야기 장면 자동 재생은 이야기 전용 테스트에서만 확인한다
-  await page.addInitScript(() => { if (!sessionStorage.getItem('story-on')) window.__TILT_SKIP_STORY = true; });
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem('story-on')) window.__TILT_SKIP_STORY = true;
+    if (!sessionStorage.getItem('title-on')) window.__TILT_SKIP_TITLE = true;   // 시작 화면은 전용 테스트에서만
+  });
   await page.goto('index.html');
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -541,4 +544,72 @@ test('[스토리] 4장에는 색깔 문이 그려지고 겨울 공방 배경이 
   await expect(page.locator('#hud-num')).toHaveText('4장 · 1단계');
   await expect(page.locator('.cell.gate')).toHaveCount(1);
   expect(await page.evaluate(() => document.documentElement.dataset.scene)).toBe('winter');
+});
+
+// ---------- 시작 화면 · 배경음악 ----------
+async function titleOn(page) {
+  await page.evaluate(() => sessionStorage.setItem('title-on', '1'));
+  await page.reload();
+}
+
+test('[시작 화면] 글자 조각·구슬·시연 판이 움직이고, 누르면 장 선택으로 간다', async ({ page }) => {
+  await titleOn(page);
+  await expect(page.locator('#title')).toBeVisible();
+  await expect(page.locator('#menu')).toBeHidden();
+  await expect(page.locator('.title-logo .tile')).toHaveCount(5);
+  await expect(page.locator('#title')).toHaveClass(/play/);
+  // 시연 판이 실제 퍼즐을 스스로 푼다(구슬이 움직임)
+  const demo = await page.evaluate(() => window.__tilt.demo());
+  expect(demo.running).toBe(true);
+  expect(demo.steps).toBeGreaterThan(3);
+  const before = await page.locator('#demo-board .piece.marble').first().getAttribute('style');
+  await page.waitForTimeout(3200);
+  const after = await page.locator('#demo-board .piece.marble').first().getAttribute('style');
+  expect(after).not.toBe(before);
+  await page.locator('#btn-start').click();
+  await expect(page.locator('#menu')).toBeVisible();
+  await expect(page.locator('#title')).toBeHidden();
+  expect((await page.evaluate(() => window.__tilt.demo())).running).toBe(false);
+});
+
+test('[시작 화면] 배경이 계절마다 바뀐다', async ({ page }) => {
+  await titleOn(page);
+  expect(await page.evaluate(() => document.documentElement.dataset.scene)).toBe('attic');
+  await page.waitForTimeout(6800);
+  expect(await page.evaluate(() => document.documentElement.dataset.scene)).toBe('summer');
+});
+
+test('[음악] 화면을 누르면 음악이 시작되고, 장소에 따라 곡이 바뀌며, 끌 수 있다', async ({ page }) => {
+  await titleOn(page);
+  await page.locator('#btn-start').click();
+  await page.waitForTimeout(1200);
+  let m = await page.evaluate(() => window.__tilt.music());
+  expect(m.track).toBe('title');
+  expect(m.playing).toBe(true);
+  expect(m.notes).toBeGreaterThan(0);
+  await page.evaluate(() => localStorage.setItem('tilt-marble-v1', JSON.stringify({
+    best: Object.fromEntries([...Array(16)].map((_, i) => [i, 50])), seen: { 'intro-2': true },
+  })));
+  await page.evaluate(() => sessionStorage.removeItem('title-on'));
+  await page.reload();
+  await page.locator('.level-btn').nth(16).click();
+  await page.waitForTimeout(600);
+  m = await page.evaluate(() => window.__tilt.music());
+  expect(m.track).toBe('autumn');
+  await page.locator('#btn-music').click();
+  await expect(page.locator('#btn-music')).toHaveAttribute('aria-pressed', 'false');
+  m = await page.evaluate(() => window.__tilt.music());
+  expect(m.playing).toBe(false);
+  await page.reload();
+  await page.locator('.level-btn').first().click();
+  await expect(page.locator('#btn-music')).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('[장 선택] 장마다 그림 카드가 있고, 놀이 방법을 볼 수 있다', async ({ page }) => {
+  await expect(page.locator('.chapter .chapter-art svg')).toHaveCount(4);
+  await page.locator('#btn-howto').click();
+  await expect(page.locator('#howto')).toBeVisible();
+  await expect(page.locator('#howto .rules li')).toHaveCount(4);
+  await page.locator('#howto-close').click();
+  await expect(page.locator('#howto')).toBeHidden();
 });

@@ -103,15 +103,32 @@ let parts = [];
 let canvas = null;
 let reduced = false;
 
-/** 배경을 장면에 맞게 바꾼다. root: 배경을 넣을 요소 */
+let uid = 0;
+/** 장면 SVG 마크업. 같은 화면에 여러 장면이 있어도 그라데이션 id가 겹치지 않게 접두어를 붙인다 */
+export function sceneSVG(name, cls = '') {
+  const p = `s${++uid}-`;
+  const body = (SVG[name] || SVG.attic).replace(/id="([\w-]+)"/g, `id="${p}$1"`).replace(/url\(#([\w-]+)\)/g, `url(#${p}$1)`);
+  return `<svg class="${cls}" viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid slice" aria-hidden="true">${body}</svg>`;
+}
+
+/** 배경을 장면에 맞게 바꾼다(이전 장면 위로 새 장면이 천천히 겹쳐 나타남). root: 배경 요소 */
 export function setScene(root, name) {
   if (!SVG[name]) name = 'attic';
   document.documentElement.dataset.scene = name;
   if (current === name) return;
   current = name;
   reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  root.querySelector('.scene-art').innerHTML =
-    `<svg viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid slice" aria-hidden="true">${SVG[name]}</svg>`;
+  const art = root.querySelector('.scene-art');
+  const layer = document.createElement('div');
+  layer.className = 'scene-layer';
+  layer.innerHTML = sceneSVG(name);
+  art.append(layer);
+  const old = [...art.children].slice(0, -1);
+  if (reduced || !old.length) { old.forEach((n) => n.remove()); layer.classList.add('in'); }
+  else {
+    requestAnimationFrame(() => layer.classList.add('in'));
+    setTimeout(() => old.forEach((n) => n.remove()), 1300);
+  }
   canvas = root.querySelector('.scene-fx');
   resize();
   const fx = FX[name];
@@ -120,6 +137,9 @@ export function setScene(root, name) {
   if (reduced) draw(fx, 0);
   else loop(fx);
 }
+
+/** 지금 배경 장면 이름 */
+export function currentScene() { return current; }
 
 function spawn(fx, anywhere) {
   const w = canvas.width, h = canvas.height;
