@@ -95,11 +95,18 @@ jobs:
                 echo "::notice::$dir: ROBLOX_API_KEY가 없어 게시를 건너뜁니다."
                 exit 0
               fi
-              status=$(curl -sS -o response.json -w '%{http_code}' -X POST \
-                "https://apis.roblox.com/universes/v1/${universe}/places/${place}/versions?versionType=Published" \
-                -H "x-api-key: ${ROBLOX_API_KEY}" \
-                -H "Content-Type: application/octet-stream" \
-                --data-binary @place.rbxl)
+              # 409(서버 바쁨/Studio에서 열려 있음), 429, 5xx는 잠시 후 다시 시도합니다.
+              for attempt in 1 2 3 4 5; do
+                status=$(curl -sS -o response.json -w '%{http_code}' -X POST \
+                  "https://apis.roblox.com/universes/v1/${universe}/places/${place}/versions?versionType=Published" \
+                  -H "x-api-key: ${ROBLOX_API_KEY}" \
+                  -H "Content-Type: application/octet-stream" \
+                  --data-binary @place.rbxl)
+                case "$status" in 409|429|5??) ;; *) break ;; esac
+                [ "$attempt" = 5 ] && break
+                echo "HTTP $status - $((attempt * 30))초 후 재시도 ($attempt/5)"; cat response.json; echo
+                sleep $((attempt * 30))
+              done
               cat response.json; echo
               if [ "$status" != "200" ]; then
                 echo "::error::$dir: Roblox 게시 실패 (HTTP $status)"
