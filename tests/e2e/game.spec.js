@@ -204,11 +204,11 @@ test('[실기기 사례] 버튼을 누를 때 흔들려도, 63°로 들고 쟁�
   await expect(page.locator('#meter')).toHaveClass(/calib/);
   await hold(page, base, 450);                         // 편하게 들고 멈춤 → 기준
   await expect(page.locator('#meter')).not.toHaveClass(/calib/);
-  await hold(page, turn(base, 'x', 16), 120);          // 아래
+  await hold(page, turn(base, 'x', 16), 450);          // 아래
   await waitIdle(page);
   await expect(page.locator('#hud-moves')).toHaveText('1');
   await hold(page, base, 200);                         // 돌아옴
-  await hold(page, turn(base, 'y', 15), 120);          // 오른쪽 15° (쟁반 기울이기)
+  await hold(page, turn(base, 'y', 15), 450);          // 오른쪽 15° (쟁반 기울이기)
   await waitIdle(page);
   await expect(page.locator('#dlg-title')).toHaveText('완벽해요!');
 });
@@ -218,11 +218,11 @@ test('세워 든 상태(85°)에서 앞으로 젖히기·핸들 돌리기로 1�
   await startMotion(page);
   const base = posture(85);
   await hold(page, base, 450);
-  await hold(page, turn(base, 'x', 16), 120);          // 세로를 지나 아래
+  await hold(page, turn(base, 'x', 16), 450);          // 세로를 지나 아래
   await waitIdle(page);
   await expect(page.locator('#hud-moves')).toHaveText('1');
   await hold(page, base, 200);
-  await hold(page, turn(base, 'z', -16), 120);         // 시계 방향으로 돌림 → 오른쪽
+  await hold(page, turn(base, 'z', -16), 450);         // 시계 방향으로 돌림 → 오른쪽
   await waitIdle(page);
   await expect(page.locator('#dlg-title')).toHaveText('완벽해요!');
 });
@@ -232,7 +232,7 @@ test('[요청] 대각선으로 한 번 기울이면 두 방향으로 흘러가 1
   await startMotion(page);
   const base = posture(60);
   await hold(page, base, 450);
-  await hold(page, turn(turn(base, 'x', 11), 'y', 11), 1500);   // 아래·오른쪽 대각선으로 기울인 채 유지
+  await hold(page, turn(turn(base, 'x', 11), 'y', 11), 2600);   // 아래·오른쪽 대각선으로 기울인 채 유지
   await waitIdle(page);
   await expect(page.locator('#dlg-title')).toHaveText('완벽해요!');
 });
@@ -243,7 +243,7 @@ test('[요청] 정중앙으로 돌아오지 않고 아래 → 오른쪽으로 �
   const base = posture(60);
   await hold(page, base, 450);
   await hold(page, turn(base, 'x', 16), 500);                   // 아래
-  await hold(page, turn(turn(base, 'x', 10), 'y', 16), 800);    // 아래를 조금 남긴 채 오른쪽으로
+  await hold(page, turn(turn(base, 'x', 10), 'y', 16), 1300);    // 아래를 조금 남긴 채 오른쪽으로
   await waitIdle(page);
   await expect(page.locator('#dlg-title')).toHaveText('완벽해요!');
 });
@@ -284,7 +284,7 @@ test('감도를 바꾸면 그 각도부터 입력된다', async ({ page, isMobil
   await expect(page.getByRole('button', { name: '민감' })).toHaveAttribute('aria-pressed', 'true');
   const base = posture(45);
   await hold(page, base, 450);
-  await hold(page, turn(base, 'x', 10), 120);          // 민감(8°)이면 10°로 충분
+  await hold(page, turn(base, 'x', 10), 450);          // 민감(8°)이면 10°로 충분
   await waitIdle(page);
   await expect(page.locator('#hud-moves')).toHaveText('1');
   await page.getByRole('button', { name: '둔하게' }).click();
@@ -384,4 +384,29 @@ test('넓은 화면에서는 판이 왼쪽, 조작부가 오른쪽에 놓인다'
   const pad = await page.locator('.dpad').boundingBox();
   expect(pad.x).toBeGreaterThan(frame.x + frame.width);
   expect(frame.height).toBeGreaterThan(550);
+});
+
+test('[요청] 구슬이 실제 공처럼 천천히 굴러간다: 점점 빨라지고, 무늬가 돌고, 벽에서 튕긴다', async ({ page }) => {
+  await page.locator('.level-btn').first().click();
+  await page.keyboard.press('ArrowDown');            // 1단계: 구슬이 2칸 굴러가 벽에 멈춘다
+  const info = await page.evaluate(() => {
+    const piece = document.querySelector('.piece.marble');
+    const [move] = piece.getAnimations();
+    const [spin] = piece.querySelector('.ball').getAnimations();
+    const kf = move.effect.getKeyframes();
+    return {
+      duration: move.effect.getTiming().duration,
+      easing: kf[0].easing,
+      frames: kf.length,
+      squash: kf[1].transform,
+      spin: spin ? spin.effect.getKeyframes().map((f) => f.backgroundPosition) : null,
+    };
+  });
+  expect(info.duration).toBeGreaterThanOrEqual(380);  // 이전 180ms → 약 2배 이상
+  expect(info.easing).toContain('cubic-bezier(0.55');  // 출발은 느리게, 점점 빠르게
+  expect(info.frames).toBe(4);                          // 이동 → 부딪힘 → 튕김 → 멈춤
+  expect(info.squash).toContain('scale(');
+  expect(info.spin[0]).not.toBe(info.spin[1]);          // 표면 무늬가 굴러간 만큼 돈다
+  await waitIdle(page);
+  await expect(page.locator('#hud-moves')).toHaveText('1');
 });

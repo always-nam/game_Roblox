@@ -162,3 +162,23 @@ export function createTiltDetector({ on = SENSITIVITY.normal } = {}) {
     },
   };
 }
+
+// ---------- 흐름 속도 조절 ----------
+// 기울인 방향이 바뀌어도 바로 움직이지 않고, 그 방향으로 잠깐(dwell) 기울어 있어야 움직인다.
+// 앞 움직임이 끝난 뒤에도 잠깐(gap) 쉬었다가 다음 움직임을 시작해, 연속 흐름이 천천히 이어진다.
+export const FLOW = { dwell: 140, gap: 260 };
+
+export function createFlowGate({ dwell = FLOW.dwell, gap = FLOW.gap } = {}) {
+  let pending = null;
+  return {
+    reset() { pending = null; },
+    /** cands: 지금 적용 가능한 방향들(우선순위 순), t: 지금 시각, lastEnd: 앞 움직임이 끝난 시각 */
+    decide(cands, t, lastEnd = -Infinity) {
+      const c = cands[0];
+      if (!c) { pending = null; return null; }
+      if (!pending || pending.dir !== c) pending = { dir: c, since: t };
+      if (t - pending.since >= dwell && t - lastEnd >= gap) { pending = null; return c; }
+      return null;
+    },
+  };
+}

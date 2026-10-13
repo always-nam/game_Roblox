@@ -2,14 +2,13 @@
 import { parseLevel, tilt, status, starsFor, cloneState } from './engine.js';
 import { LEVELS } from './levels.js';
 import { generatePuzzle, dateSeed } from './generator.js';
-import { createTiltDetector, SENSITIVITY } from './motion.js';
+import { createTiltDetector, SENSITIVITY, createFlowGate } from './motion.js';
+import { rollKeyframes } from './anim.js';
 
 const $ = (sel) => document.querySelector(sel);
 const STORE_KEY = 'tilt-marble-v1';
 const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-const STEP_MS = reducedMotion ? 0 : 55;
-const BASE_MS = reducedMotion ? 0 : 70;
-const SINK_MS = reducedMotion ? 0 : 230;
+const SINK_MS = reducedMotion ? 0 : 320;
 
 // ---------- 저장 (브라우저 저장소가 막혀 있어도 게임은 동작) ----------
 function loadProgress() {
@@ -37,6 +36,7 @@ const game = {
   animating: false,
   queued: null,
   ended: false,
+  lastMoveEnd: -Infinity,
 };
 
 let daily = null;
@@ -154,6 +154,12 @@ function buildBoard() {
     const el = document.createElement('div');
     el.className = `piece ${p.kind}` + (p.color ? ` c-${p.color}` : '');
     el.dataset.id = String(p.id);
+    if (p.kind === 'marble') {
+      // 구슬: 무늬가 있는 공(.ball) — 굴러갈 때 무늬가 진행 방향으로 돌아간다
+      const ball = document.createElement('span');
+      ball.className = 'ball';
+      el.append(ball);
+    }
     board.append(el);
   }
   syncPieces(true);
@@ -209,28 +215,43 @@ function doTilt(dir, { silent = false } = {}) {
     return false;
   }
   motion.last = dir;
+  const before = game.state;
   game.history.push(game.state);
   game.state = r.state;
   game.moves++;
   updateHud();
-  animateMoves(r.moves, dir);
+  animateMoves(r.moves, dir, before);
   return true;
 }
 
-function animateMoves(moves, dir) {
+// 실제 공처럼 굴리기: 점점 빨라지다가 벽에 부딪혀 살짝 튕기고, 표면 무늬가 굴러간 만큼 돈다(anim.js)
+function animateMoves(moves, dir, before) {
   const board = $('#board');
   const frame = $('#frame');
   frame.classList.remove('live');
   frame.className = `frame tilt-${dir}`;
   game.animating = true;
+  const cell = parseFloat(getComputedStyle($('#app')).getPropertyValue('--cell')) || 56;
   let longest = 0;
   for (const m of moves) {
     const el = board.querySelector(`.piece[data-id="${m.id}"]`);
     const last = m.path[m.path.length - 1];
-    const dur = BASE_MS + STEP_MS * m.path.length;
-    el.style.transitionDuration = `${dur}ms`;
+    const prevPiece = before.pieces.find((p) => p.id === m.id);
+    const ball = el.querySelector('.ball');
+    const skin = { x: Number(el.dataset.sx) || 0, y: Number(el.dataset.sy) || 0 };
+    const k = rollKeyframes({ from: prevPiece, to: last, cell, end: m.end, kind: prevPiece.kind, skin });
+    const dur = reducedMotion ? 1 : k.duration;
     el.style.setProperty('--x', last.x);
     el.style.setProperty('--y', last.y);
+    if (el.animate) {
+      el.animate(k.frames, { duration: dur, fill: 'none' });
+      if (ball && k.skinFrames) ball.animate(k.skinFrames, { duration: dur, fill: 'none' });
+    }
+    if (ball) {
+      el.dataset.sx = String(k.skinEnd.x);
+      el.dataset.sy = String(k.skinEnd.y);
+      ball.style.backgroundPosition = `${k.skinEnd.x}px ${k.skinEnd.y}px`;
+    }
     let total = dur;
     if (m.end !== 'stop') {
       total += SINK_MS;
@@ -247,6 +268,7 @@ function animateMoves(moves, dir) {
     frame.className = 'frame';
     syncPieces(false);
     game.animating = false;
+    game.lastMoveEnd = performance.now();
     const st = status(game.state);
     if (st !== 'playing') return finish(st);
     if (game.queued) { const q = game.queued; game.queued = null; doTilt(q); }
@@ -386,6 +408,7 @@ const motion = {
   gotEvent: false,
   watchdog: 0,
   last: null,      // 마지막에 적용한 방향(같은 방향은 다시 적용해도 변화가 없으므로 건너뛴다)
+  gate: createFlowGate(),
   paused: false,
 };
 
@@ -449,10 +472,10 @@ function motionStep(r) {
     if (r.dirs.length) return;
     motion.paused = false;
   }
-  for (const dir of r.dirs) {
-    if (dir === motion.last) continue;
-    if (doTilt(dir, { silent: true })) return;
-  }
+  // 적용할 수 있는(실제로 움직이는) 방향만 후보로, 잠깐 기울어 있어야 하고 앞 움직임 뒤 쉬었다가 적용
+  const cands = r.dirs.filter((dir) => dir !== motion.last && tilt(game.level, game.state, dir).changed);
+  const dir = motion.gate.decide(cands, performance.now(), game.lastMoveEnd);
+  if (dir) doTilt(dir, { silent: true });
 }
 
 async function enableMotion(fromButton) {

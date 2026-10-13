@@ -13,7 +13,7 @@ const pick = (name) => {
 const strip = (src) => src
   .replace(/^import [^;]+;\s*$/gm, '')
   .replace(/^export (const|function|let)/gm, '$1');
-const js = ['src/engine.js', 'src/levels.js', 'src/generator.js', 'src/motion.js', 'src/main.js']
+const js = ['src/engine.js', 'src/levels.js', 'src/generator.js', 'src/motion.js', 'src/anim.js', 'src/main.js']
   .map((f) => `// ---- ${f} ----\n${strip(readFileSync(f, 'utf8'))}`)
   .join('\n');
 if (/^\s*(import|export)\s/m.test(js)) throw new Error('남은 import/export 구문이 있습니다');
