@@ -1,21 +1,18 @@
 // 휴대폰 기울기(DeviceOrientation) → 판 기울이기 방향 변환. DOM 없이 테스트할 수 있는 순수 로직.
 //
-// 설계 (실기기 갤럭시 폴드 진단 값으로 확인한 문제를 반영)
-// 1. 기준 자세는 '휴대폰이 잠깐 멈췄을 때' 잡는다. 버튼을 누르는 순간의 흔들림을 기준으로 삼으면
-//    모든 방향이 대각선으로 치우친다.
-// 2. 기울기는 기준 자세에서 '기기 자신의 축으로 얼마나 돌렸는지'로 잰다. 중력 투영으로 재면
-//    휴대폰을 세워 들었을 때 좌우 기울기가 절반 이하로 줄어든다(63° 들고 15° 기울이면 6.7°).
-//      앞뒤 = 기기 가로축(x) 회전, 좌우 = 기기 세로축(y) 회전 + 세워 들었을 때의 핸들 돌리기(z)
-// 3. '흐름' 방식: 판은 지금 기울어진 방향으로 계속 흐른다. 정중앙으로 돌아올 필요가 없다.
-//    같은 방향으로 두 번 기울여도 이 게임에서는 아무것도 바뀌지 않으므로(이미 끝까지 굴러감),
-//    마지막에 적용한 방향과 '다른' 기울어진 방향만 적용하면 된다. 대각선이면 두 방향을 번갈아
-//    적용해 더 움직이지 않을 때까지 굴러간다(실제 판을 대각선으로 기울인 것과 같은 결과).
-// 4. 기준 근처에서 멈춰 있으면 그 자세로 기준을 다시 맞춘다(자세가 바뀌어도 계속 동작).
+// 설계 (실기기 갤럭시 폴드 사용 피드백을 반영)
+// 1. 원점: 좌우는 '실제 수평'(0°)이 원점이다. 오른쪽으로 기운 채 시작하면 실제 판처럼 바로 오른쪽으로
+//    흐른다. 앞뒤는 사람마다 편하게 드는 각도가 달라서 한 번 정한 각도를 원점으로 저장해 쓴다
+//    (단계를 시작할 때마다 다시 잡지 않는다 — 기운 채 시작하면 그쪽으로 안 굴러가던 문제).
+// 2. 좌우 기울기는 '쟁반처럼 기울인 각도'(화면 가로축 기준)로 잰다. 휴대폰을 세워 들어도 15° 기울이면
+//    15°로 잡힌다. 거의 세운 상태에서는 핸들처럼 돌리는 동작도 좌우로 잡힌다.
+// 3. 앞뒤 기울기는 세로를 지나도 끊기지 않는 각도(atan2)로 잰다.
+// 4. '흐름' 방식: 판은 지금 기울어진 방향으로 계속 흐른다. 같은 방향은 이미 끝까지 굴러간 상태라
+//    다시 적용하지 않고, 다른 방향으로 기울이면 바로 그 방향으로 흐른다. 대각선은 두 방향을 번갈아.
 
 export const SENSITIVITY = { low: 18, normal: 12, high: 8 };   // 입력으로 인정하는 기울기(도)
 export const REST_SPEED = 25;     // 이보다 느리게 움직이면(도/초) 멈춘 것으로 본다
-export const CALIB_MS = 300;      // 처음 기준: 이만큼 멈추면 잡는다
-export const RECENTER_MS = 700;   // 기준 근처에서 이만큼 멈추면 기준을 다시 맞춘다
+export const CALIB_MS = 300;      // 원점(앞뒤)을 잡을 때 이만큼 멈춰 있어야 한다
 export const AXIS_SHARE = 0.5;    // 대각선: 전체 기울기가 기준을 넘으면, 그 절반 이상인 방향 성분도 인정
 
 const RAD = Math.PI / 180;
@@ -43,9 +40,6 @@ export function matrixToEuler(R) {
 export function mul(A, B) {
   return A.map((row) => [0, 1, 2].map((j) => row[0] * B[0][j] + row[1] * B[1][j] + row[2] * B[2][j]));
 }
-export function transpose(A) {
-  return [0, 1, 2].map((i) => [A[0][i], A[1][i], A[2][i]]);
-}
 
 /** 기기 축 회전 행렬 (테스트·도구용) */
 export function axisRotation(axis, deg) {
@@ -55,19 +49,17 @@ export function axisRotation(axis, deg) {
   return [[c, -s, 0], [s, c, 0], [0, 0, 1]];
 }
 
-/** 상대 회전 행렬 → 회전 벡터(도). 축 방향 × 회전각 */
-function rotationVector(R) {
-  const tr = R[0][0] + R[1][1] + R[2][2];
-  const theta = Math.acos(Math.max(-1, Math.min(1, (tr - 1) / 2)));
-  const v = [(R[2][1] - R[1][2]) / 2, (R[0][2] - R[2][0]) / 2, (R[1][0] - R[0][1]) / 2];
-  const k = theta < 1e-6 ? 1 : theta / Math.sin(theta);
-  return v.map((c) => c * k * DEG);
-}
+const wrap180 = (a) => ((((a + 180) % 360) + 360) % 360) - 180;
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
-function rotationAngle(A, B) {
-  const R = mul(transpose(A), B);
-  const tr = R[0][0] + R[1][1] + R[2][2];
-  return Math.acos(Math.max(-1, Math.min(1, (tr - 1) / 2))) * DEG;
+/** 화면 회전 각도별: 화면 오른쪽(r)과 화면 위쪽(t) 방향을 기기 좌표로 */
+function screenAxes(angle) {
+  switch (((angle % 360) + 360) % 360) {
+    case 90: return { r: [0, -1, 0], t: [1, 0, 0] };
+    case 180: return { r: [-1, 0, 0], t: [0, -1, 0] };
+    case 270: return { r: [0, 1, 0], t: [-1, 0, 0] };
+    default: return { r: [1, 0, 0], t: [0, 1, 0] };
+  }
 }
 
 /** 기기 기준 기울기(X=오른쪽, Y=아래쪽으로 굴러감)를 화면 기준 {x, y}로 바꾼다 */
@@ -80,14 +72,25 @@ export function toScreen(X, Y, angle = 0) {
   }
 }
 
-/** 기준 자세 base(행렬)에서 지금 자세 R까지, 사용자가 의도한 기울기(화면 기준, 도) */
-export function tiltIntent(base, R, angle = 0) {
-  const w = rotationVector(mul(transpose(base), R));   // 기준 자세의 기기 좌표로 본 회전
-  const up = base[2];                                   // 기준 자세에서 '위쪽'의 기기 좌표 (세운 정도)
-  // 쟁반처럼 기울이기(x·y축) + 세워 들었을 때 핸들처럼 돌리기(z축, 세운 만큼만 반영)
-  const X = w[1] - w[2] * up[1];
-  const Y = w[0] - w[2] * up[0];
-  return toScreen(X, Y, angle);
+/**
+ * 지금 자세의 절대 기울기(도, 화면 기준)
+ *  side : 좌우. 실제 수평이 0, 오른쪽 모서리가 내려가면 +
+ *  pitch: 앞뒤. 바닥에 눕히면 0, 화면 위쪽이 들릴수록 +(세우면 90, 더 젖히면 90 초과)
+ */
+export function absoluteTilt(beta, gamma, angle = 0) {
+  const R = eulerToMatrix(0, beta, gamma);
+  const up = R[2];                                   // 지구 '위쪽'을 기기 좌표로 본 것
+  const { r, t } = screenAxes(angle);
+  const ur = dot(up, r), ut = dot(up, t), un = up[2];
+  const pitch = Math.atan2(ut, un) * DEG;
+  // 세운 정도(0~90°). 70°까지는 쟁반 기울이기 각도를 그대로 쓰고, 그 이상은 세울수록
+  // 핸들 돌리기 각도로 넘어간다(완전히 세우면 쟁반 기울이기는 물리적으로 '돌아서기'라 감지할 수 없음)
+  const upright = 90 - Math.abs(90 - Math.abs(pitch));
+  const k = Math.max(0, Math.min(1, (upright - 70) / 18));
+  return {
+    side: Math.atan2(-ur, Math.hypot(un, k * ut)) * DEG,
+    pitch,
+  };
 }
 
 /** 화면 기준 기울기에서 우세한 방향과 크기 */
@@ -102,10 +105,10 @@ export function dominant({ x, y }) {
  */
 export function activeDirs({ x, y }, on) {
   if (Math.hypot(x, y) < on) return [];
-  const comps = [[x >= 0 ? 'right' : 'left', Math.abs(x)], [y >= 0 ? 'down' : 'up', Math.abs(y)]]
+  return [[x >= 0 ? 'right' : 'left', Math.abs(x)], [y >= 0 ? 'down' : 'up', Math.abs(y)]]
     .filter(([, v]) => v >= on * AXIS_SHARE)
-    .sort((a, b) => b[1] - a[1]);
-  return comps.map(([d]) => d);
+    .sort((a, b) => b[1] - a[1])
+    .map(([d]) => d);
 }
 
 /** 적용할 방향 후보: 기울어진 방향 중 마지막에 적용한 방향은 빼고(이미 끝까지 굴러간 상태), 센 쪽부터 */
@@ -114,51 +117,51 @@ export function nextDirs(d, last, on) {
 }
 
 /**
- * 기울기 감지기. feed(beta, gamma, angle, alpha, t) → { x, y, dirs, state }
- *  - x, y : 기준 대비 화면 기준 기울기(도)
- *  - dirs : 지금 기울어진 방향들(센 쪽부터). 무엇을 적용할지는 게임 쪽에서 nextDirs로 고른다.
- *  - state: 'calib'(기준 잡는 중) | 'ready'
+ * 기울기 감지기.
+ *   origin: { pitch, angle } — 저장해 둔 앞뒤 원점. 없으면 처음 멈췄을 때 잡는다.
+ *   feed(beta, gamma, angle, t) → { x, y, dirs, state, origin }
+ *     x, y : 원점 대비 화면 기준 기울기(도). 좌우 원점은 항상 실제 수평.
+ *     dirs : 지금 기울어진 방향들(센 쪽부터)
+ *     state: 'calib'(앞뒤 원점 잡는 중) | 'ready'
+ *     origin: 새로 잡은 원점(저장용, 이번에 잡았을 때만)
  */
-export function createTiltDetector({ on = SENSITIVITY.normal } = {}) {
-  let state = 'calib';
-  let base = null;
-  let baseAngle = 0;
+export function createTiltDetector({ on = SENSITIVITY.normal, origin = null } = {}) {
+  let org = origin && Number.isFinite(origin.pitch) ? { pitch: origin.pitch, angle: origin.angle || 0 } : null;
+  let state = org ? 'ready' : 'calib';
   let prev = null;
   let restSince = null;
   return {
     get state() { return state; },
-    get base() { return base; },
+    get origin() { return org; },
     get threshold() { return on; },
-    calibrate() { state = 'calib'; base = null; restSince = null; prev = null; },
-    feed(beta, gamma, angle = 0, alpha = 0, t = Date.now()) {
-      const idle = { x: 0, y: 0, dirs: [], state };
-      if (beta == null || gamma == null || Number.isNaN(beta) || Number.isNaN(gamma)) return idle;
-      const R = eulerToMatrix(alpha == null || Number.isNaN(alpha) ? 0 : alpha, beta, gamma);
+    /** 앞뒤 원점을 다시 잡는다(다음에 멈췄을 때의 자세로) */
+    calibrate() { state = 'calib'; org = null; restSince = null; prev = null; },
+    feed(beta, gamma, angle = 0, t = Date.now()) {
+      if (beta == null || gamma == null || Number.isNaN(beta) || Number.isNaN(gamma)) return { x: 0, y: 0, dirs: [], state };
+      const a = absoluteTilt(beta, gamma, angle);
 
-      // 멈춤 판정: 직전 값과의 회전 속도
+      // 멈춤 판정(원점 잡을 때만 필요): 직전 값과의 각속도
       if (prev) {
-        const speed = rotationAngle(prev.R, R) / Math.max(1, t - prev.t) * 1000;
+        const speed = Math.hypot(a.side - prev.side, wrap180(a.pitch - prev.pitch)) / Math.max(1, t - prev.t) * 1000;
         if (speed < REST_SPEED) restSince ??= prev.t;
         else restSince = null;
       } else {
         restSince = t;
       }
-      prev = { R, t };
-      let restFor = restSince == null ? 0 : t - restSince;
+      prev = { ...a, t };
+      const restFor = restSince == null ? 0 : t - restSince;
 
-      if (base && angle !== baseAngle) { state = 'calib'; base = null; restSince = t; restFor = 0; }
+      // 화면을 돌리면 앞뒤 축이 바뀌므로 원점을 다시 잡는다
+      if (org && org.angle !== angle) { org = null; state = 'calib'; restSince = t; return { x: a.side, y: 0, dirs: [], state }; }
+      let fresh = null;
       if (state === 'calib') {
-        if (restFor >= CALIB_MS) { base = R; baseAngle = angle; state = 'ready'; }
-        return { x: 0, y: 0, dirs: [], state };
+        if (restFor < CALIB_MS) return { x: a.side, y: 0, dirs: [], state };
+        org = { pitch: a.pitch, angle };
+        fresh = org;
+        state = 'ready';
       }
-
-      const d = tiltIntent(base, R, angle);
-      // 기준 근처(입력 각도의 절반 이내)에서 멈춰 있으면 지금 자세로 기준을 다시 맞춘다
-      if (restFor >= RECENTER_MS && Math.hypot(d.x, d.y) < on * 0.5) {
-        base = R;
-        restSince = t;
-      }
-      return { ...d, dirs: activeDirs(d, on), state };
+      const d = { x: a.side, y: wrap180(a.pitch - org.pitch) };
+      return { ...d, dirs: activeDirs(d, on), state, origin: fresh };
     },
   };
 }

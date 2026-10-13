@@ -410,3 +410,60 @@ test('[요청] 구슬이 실제 공처럼 천천히 굴러간다: 점점 빨라�
   await waitIdle(page);
   await expect(page.locator('#hud-moves')).toHaveText('1');
 });
+
+test('[요청] 원점은 저장되어, 기운 채로 다음 단계를 시작하면 바로 그쪽으로 흐른다', async ({ page, isMobile }) => {
+  test.skip(!isMobile, '휴대폰 전용');
+  await startMotion(page);
+  await hold(page, posture(55), 450);                       // 원점(앞뒤 55°) 잡기
+  await expect(page.locator('#meter')).not.toHaveClass(/calib/);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('tilt-marble-v1')).origin.pitch)).toBeCloseTo(55, 0);
+  await page.locator('#btn-menu').click();
+  await hold(page, turn(posture(55), 'y', 18), 100);         // 오른쪽으로 기운 채
+  await page.locator('.level-btn').first().click();          // 다시 시작
+  await hold(page, turn(posture(55), 'y', 18), 900);         // 계속 기운 채 → 원점은 그대로라 오른쪽으로 흐름
+  await waitIdle(page);
+  await expect(page.locator('#hud-moves')).toHaveText('1');
+  await expect(page.locator('#meter')).not.toHaveClass(/calib/);
+});
+
+test('저장된 원점은 새로고침 뒤에도 유지된다', async ({ page, isMobile }) => {
+  test.skip(!isMobile, '휴대폰 전용');
+  await page.evaluate(() => localStorage.setItem('tilt-marble-v1', JSON.stringify({ motion: true, origin: { pitch: 40, angle: 0 } })));
+  await page.reload();
+  await page.locator('.level-btn').first().click();
+  await page.locator('#btn-motion').click();                 // 켜기(이전 설정이 켜짐이면 한 번 더 누를 필요 없음)
+  if ((await page.locator('#btn-motion').getAttribute('aria-pressed')) !== 'true') await page.locator('#btn-motion').click();
+  await hold(page, posture(57), 600);                        // 원점 40°에서 17° 젖힘 → 바로 아래
+  await waitIdle(page);
+  await expect(page.locator('#hud-moves')).toHaveText('1');
+});
+
+// ---------- 소리 ----------
+test('[요청] 굴러가는 소리·벽 소리·구멍 소리·성공 소리가 난다', async ({ page }) => {
+  await page.locator('.level-btn').first().click();
+  await page.keyboard.press('ArrowDown');
+  await waitIdle(page);
+  let s = await page.evaluate(() => window.__tilt.sound());
+  expect(s.enabled).toBe(true);
+  expect(s.roll).toBeGreaterThanOrEqual(1);
+  expect(s.hit).toBeGreaterThanOrEqual(1);
+  await page.keyboard.press('ArrowRight');                   // 구멍에 쏙 → 성공
+  await waitIdle(page);
+  await expect(page.locator('#overlay')).toBeVisible();
+  s = await page.evaluate(() => window.__tilt.sound());
+  expect(s.hole).toBeGreaterThanOrEqual(1);
+  expect(s.win).toBe(1);
+});
+
+test('소리 버튼으로 끄면 소리가 나지 않고, 설정이 저장된다', async ({ page }) => {
+  await page.locator('.level-btn').first().click();
+  await page.locator('#btn-sound').click();
+  await expect(page.locator('#btn-sound')).toHaveAttribute('aria-pressed', 'false');
+  const before = await page.evaluate(() => window.__tilt.sound().roll);
+  await page.keyboard.press('ArrowDown');
+  await waitIdle(page);
+  expect(await page.evaluate(() => window.__tilt.sound().roll)).toBe(before);
+  await page.reload();
+  await page.locator('.level-btn').first().click();
+  await expect(page.locator('#btn-sound')).toHaveAttribute('aria-pressed', 'false');
+});

@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rollDuration, rollKeyframes, ROLL } from '../../src/anim.js';
-import { createFlowGate } from '../../src/motion.js';
 
 test('[요청] 이전 속도의 약 절반: 굴러가는 시간이 약 2배', () => {
   const before = (n) => 70 + 55 * n;              // 이전 버전의 이동 시간(ms)
@@ -44,21 +43,4 @@ test('돌은 무늬가 없고 덜 튕긴다', () => {
   const k = rollKeyframes({ from: { x: 0, y: 0 }, to: { x: 2, y: 0 }, cell: 50, kind: 'stone' });
   assert.equal(k.skinFrames, null);
   assert.match(k.frames[2].transform, /translate\(97\.60px/);
-});
-
-test('흐름 조절: 같은 방향으로 잠깐 기울어 있어야 하고, 앞 움직임이 끝나고 쉬었다가 움직인다', () => {
-  const g = createFlowGate({ dwell: 140, gap: 260 });
-  assert.equal(g.decide(['down'], 0), null);          // 막 기울임
-  assert.equal(g.decide(['down'], 100), null);        // 아직 140ms 안 됨
-  assert.equal(g.decide(['down'], 150), 'down');
-  // 앞 움직임이 t=1000에 끝남
-  assert.equal(g.decide(['right'], 1000, 1000), null);
-  assert.equal(g.decide(['right'], 1200, 1000), null);   // 쉬는 시간 260ms 전
-  assert.equal(g.decide(['right'], 1270, 1000), 'right');
-  // 방향이 바뀌면 다시 기다린다
-  assert.equal(g.decide(['up'], 2000, 0), null);
-  assert.equal(g.decide(['left'], 2100, 0), null);
-  assert.equal(g.decide(['left'], 2200, 0), null);
-  assert.equal(g.decide(['left'], 2250, 0), 'left');
-  assert.equal(g.decide([], 3000, 0), null);
 });

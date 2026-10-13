@@ -369,6 +369,22 @@ button { font: inherit; color: inherit; }
   .hud-name { font-size: 26px; }
 }
 
+/* 좁은 휴대폰(약 420px 이하): 단계 이름을 둘째 줄로, 버튼을 조금 작게 */
+@media (max-width: 420px) {
+  .hud { flex-wrap: wrap; row-gap: 4px; gap: 6px; }
+  .hud-title { order: 5; flex: 1 1 100%; flex-direction: row; align-items: baseline; gap: 8px; }
+  .hud-stats { margin-left: auto; gap: 10px; }
+  .hud-stats dd { font-size: 20px; }
+  .icon-btn, .meter { width: 40px; height: 40px; }
+  .hud-name { font-size: 20px; }
+  .tools .btn, .sens button { white-space: nowrap; font-size: 14px; }
+  .sens { gap: 4px; }
+  .sens button { padding-inline: 2px; }
+  .dpad { grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(2, 44px); gap: 5px; }
+  .controls { gap: 8px; }
+}
+.tools .btn, .sens button { white-space: nowrap; }
+
 /* 기울기 수평계: 가운데 고리 = 입력 기준(14°), 점 = 지금 기울기 */
 .meter {
   position: relative; flex: none;
@@ -395,13 +411,17 @@ button { font: inherit; color: inherit; }
 @keyframes calib { 50% { border-color: var(--brass); transform: scale(1.15); } }
 
 .sens { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; }
-.sens-label { font-size: 12px; color: var(--muted); margin-right: 2px; }
+.sens-label { font-size: 12px; color: var(--muted); margin-right: 2px; white-space: nowrap; }
 .sens button {
   flex: 1; min-height: 36px; padding: 4px 6px;
   border-radius: 8px; border: 1px solid var(--wood-lo);
   background: transparent; font-size: 13px; cursor: pointer;
 }
 .sens button[aria-pressed="true"] { border-color: var(--brass); color: var(--brass); font-weight: 700; }
+#btn-sound .ico-off { display: none; }
+#btn-sound[aria-pressed="false"] .ico-on { display: none; }
+#btn-sound[aria-pressed="false"] .ico-off { display: inline; }
+#btn-sound[aria-pressed="false"] { color: var(--muted); }
 #btn-full .ico-exit { display: none; }
 #btn-full[aria-pressed="true"] .ico-enter { display: none; }
 #btn-full[aria-pressed="true"] .ico-exit { display: inline; }

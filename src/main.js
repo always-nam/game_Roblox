@@ -3,7 +3,11 @@ import { parseLevel, tilt, status, starsFor, cloneState } from './engine.js';
 import { LEVELS } from './levels.js';
 import { generatePuzzle, dateSeed } from './generator.js';
 import { createTiltDetector, SENSITIVITY, createFlowGate } from './motion.js';
-import { rollKeyframes } from './anim.js';
+import { rollKeyframes, rollDuration } from './anim.js';
+import {
+  unlockAudio, setSoundEnabled, soundEnabled, soundStats,
+  playRoll, playHit, playHole, playPit, playPlug, playBump, playClick, playWin, playLose,
+} from './sound.js';
 
 const $ = (sel) => document.querySelector(sel);
 const STORE_KEY = 'tilt-marble-v1';
@@ -15,9 +19,9 @@ function loadProgress() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     const data = raw ? JSON.parse(raw) : {};
-    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full, sens: SENSITIVITY[data.sens] ? data.sens : 'normal' };
+    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full, sens: SENSITIVITY[data.sens] ? data.sens : 'normal', origin: data.origin || null, sound: data.sound !== false };
   } catch {
-    return { best: {}, daily: {}, last: 0, motion: false, full: false, sens: 'normal' };
+    return { best: {}, daily: {}, last: 0, motion: false, full: false, sens: 'normal', origin: null, sound: true };
   }
 }
 function saveProgress() {
@@ -127,8 +131,8 @@ function startLevel(def) {
   if (progress.full && fullscreenSupported() && !fullscreenElement()) enterFullscreen();
   motion.last = null;
   motion.paused = false;
-  if (motion.on) motion.detector.calibrate();
-  else if (motion.supported && progress.motion) enableMotion(false);
+  // 원점은 저장된 것을 그대로 쓴다(단계마다 다시 잡지 않음 — 기운 채 시작해도 원점은 그대로)
+  if (motion.on) { /* 계속 사용 */ } else if (motion.supported && progress.motion) enableMotion(false);
 }
 
 function buildBoard() {
@@ -209,6 +213,7 @@ function doTilt(dir, { silent = false } = {}) {
   const frame = $('#frame');
   if (!r.changed) {
     if (silent) return false;
+    playBump();
     frame.classList.remove('shake');
     void frame.offsetWidth;
     frame.classList.add('shake');
@@ -232,6 +237,7 @@ function animateMoves(moves, dir, before) {
   frame.className = `frame tilt-${dir}`;
   game.animating = true;
   const cell = parseFloat(getComputedStyle($('#app')).getPropertyValue('--cell')) || 56;
+  const vol = 1 / Math.sqrt(Math.max(1, moves.length));   // 여러 개가 함께 구르면 하나하나는 작게
   let longest = 0;
   for (const m of moves) {
     const el = board.querySelector(`.piece[data-id="${m.id}"]`);
@@ -247,6 +253,14 @@ function animateMoves(moves, dir, before) {
       el.animate(k.frames, { duration: dur, fill: 'none' });
       if (ball && k.skinFrames) ball.animate(k.skinFrames, { duration: dur, fill: 'none' });
     }
+    // 소리: 굴러감(빨라질수록 커짐) → 벽 충돌 / 구멍 / 함정
+    const cells = m.path.length;
+    const travel = reducedMotion ? 0 : rollDuration(cells, { bounce: false }) / 1000;
+    playRoll({ dur: travel, cells, kind: prevPiece.kind, vol });
+    if (m.end === 'stop') playHit({ at: travel, speed: Math.min(1, cells / 5), kind: prevPiece.kind, vol });
+    else if (m.end === 'hole') playHole({ at: travel, vol });
+    else if (m.end === 'pit') playPit({ at: travel });
+    else if (m.end === 'plug') playPlug({ at: travel });
     if (ball) {
       el.dataset.sx = String(k.skinEnd.x);
       el.dataset.sy = String(k.skinEnd.y);
@@ -321,8 +335,10 @@ function finish(st) {
     const msg = !isDaily && def.index === LEVELS.length - 1
       ? `${game.moves}수 만에 마지막 단계를 풀었습니다. 최소 ${def.par}수${record}`
       : `${game.moves}수 만에 성공 · 최소 ${def.par}수${record}`;
+    playWin(stars);
     showOverlay({ title: stars === 3 ? '완벽해요!' : '완성!', text: msg, stars, actions, lost: false });
   } else {
+    playLose();
     showOverlay({
       title: '함정에 빠졌어요',
       text: '구슬이 검은 함정으로 굴러갔습니다. 한 수 되돌려 다른 방향을 시도해 보세요.',
@@ -404,7 +420,7 @@ const debugOn = location.hash === '#debug';   // 주소 끝에 #debug를 붙이�
 const motion = {
   supported: 'DeviceOrientationEvent' in window && (navigator.maxTouchPoints > 0 || window.matchMedia?.('(pointer: coarse)').matches),
   on: false,
-  detector: createTiltDetector({ on: SENSITIVITY[progress.sens] }),
+  detector: createTiltDetector({ on: SENSITIVITY[progress.sens], origin: progress.origin }),
   gotEvent: false,
   watchdog: 0,
   last: null,      // 마지막에 적용한 방향(같은 방향은 다시 적용해도 변화가 없으므로 건너뛴다)
@@ -448,7 +464,12 @@ function onOrientation(e) {
   if (e.beta == null || e.gamma == null) return;
   motion.gotEvent = true;
   const angle = screenAngle();
-  const r = motion.detector.feed(e.beta, e.gamma, angle, e.alpha, performance.now());
+  const r = motion.detector.feed(e.beta, e.gamma, angle, performance.now());
+  if (r.origin) {                      // 앞뒤 원점을 새로 잡았으면 저장
+    progress.origin = r.origin;
+    saveProgress();
+    flashHint('원점을 잡았습니다. 기울이는 쪽으로 구슬이 흘러갑니다. 원점을 바꾸려면 오른쪽 위 수평계를 누르세요.');
+  }
   updateMeter(r);
   if (debugOn) {
     const f = (v) => (v == null ? '-' : v.toFixed(1));
@@ -495,12 +516,13 @@ async function enableMotion(fromButton) {
   }
   motion.on = true;
   motion.gotEvent = false;
-  motion.detector.calibrate();
   window.addEventListener('deviceorientation', onOrientation);
   setMotionButton();
   if (fromButton) { progress.motion = true; saveProgress(); }
-  updateMeter({ x: 0, y: 0, state: 'calib' });
-  flashHint('휴대폰을 편하게 든 채 잠깐 멈추면 그 자세가 수평 기준이 됩니다. 그다음 기울이는 쪽으로 구슬이 흘러가고, 대각선으로 기울이면 두 방향으로 흘러갑니다.');
+  updateMeter({ x: 0, y: 0, state: motion.detector.state });
+  flashHint(motion.detector.state === 'calib'
+    ? '원점 잡기: 휴대폰을 편한 앞뒤 각도로 들고 잠깐 멈추세요. 좌우는 실제 수평이 원점입니다.'
+    : '기울이는 쪽으로 구슬이 흘러갑니다. 대각선으로 기울이면 두 방향으로 흘러가요. 원점은 수평계를 눌러 다시 잡을 수 있습니다.');
   clearTimeout(motion.watchdog);
   motion.watchdog = setTimeout(() => {
     if (motion.on && !motion.gotEvent) {
@@ -525,16 +547,17 @@ function disableMotion(fromButton) {
 $('#btn-motion').addEventListener('click', () => (motion.on ? disableMotion(true) : enableMotion(true)));
 $('#meter').addEventListener('click', () => {
   motion.detector.calibrate();
+  progress.origin = null;
+  saveProgress();
   updateMeter({ x: 0, y: 0, state: 'calib' });
-  flashHint('수평 기준을 다시 잡습니다. 편한 자세로 잠깐 멈춰 주세요.');
+  flashHint('원점을 다시 잡습니다. 편한 앞뒤 각도로 들고 잠깐 멈추세요. 좌우는 실제 수평이 원점입니다.');
 });
 document.querySelectorAll('#sens button').forEach((b) => b.addEventListener('click', () => {
   progress.sens = b.dataset.sens;
   saveProgress();
-  motion.detector = createTiltDetector({ on: SENSITIVITY[progress.sens] });
-  updateMeter({ x: 0, y: 0, state: 'calib' });
+  motion.detector = createTiltDetector({ on: SENSITIVITY[progress.sens], origin: progress.origin });
   setMotionButton();
-  flashHint(`감도: ${b.textContent} (${SENSITIVITY[progress.sens]}° 기울이면 입력). 잠깐 멈추면 기준을 다시 잡습니다.`);
+  flashHint(`감도: ${b.textContent} (원점에서 ${SENSITIVITY[progress.sens]}° 기울이면 흐릅니다).`);
 }));
 setMotionButton();
 
@@ -576,9 +599,31 @@ $('#btn-full').addEventListener('click', () => {
 }));
 setFullButton();
 
+// ---------- 소리 ----------
+// 브라우저는 사용자가 누르기 전에는 소리를 못 내므로, 첫 탭·키 입력에서 오디오를 준비한다
+['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => unlockAudio(), { capture: true }));
+function setSoundButton() {
+  const b = $('#btn-sound');
+  b.setAttribute('aria-pressed', String(progress.sound));
+  b.setAttribute('aria-label', progress.sound ? '소리 끄기' : '소리 켜기');
+}
+function toggleSound() {
+  progress.sound = !progress.sound;
+  saveProgress();
+  setSoundEnabled(progress.sound);
+  setSoundButton();
+  playClick();
+}
+$('#btn-sound').addEventListener('click', toggleSound);
+document.addEventListener('keydown', (e) => { if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey) toggleSound(); });
+document.addEventListener('click', (e) => { if (e.target.closest('.btn, .level-btn, .sens button')) playClick(); });
+setSoundEnabled(progress.sound);
+setSoundButton();
+
 // 자동 테스트용 읽기 전용 정보
 window.__tilt = {
   motion: () => ({ supported: motion.supported, on: motion.on }),
+  sound: () => ({ ...soundStats, enabled: soundEnabled() }),
   info: () => ({ key: game.def?.key, moves: game.moves, status: game.state ? status(game.state) : null, animating: game.animating, par: game.def?.par }),
   rows: () => game.def?.rows,
 };

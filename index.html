@@ -45,7 +45,7 @@
     <h2 class="section-label">단계 선택 <span id="star-total" class="star-total"></span></h2>
     <ol class="level-grid" id="level-grid"></ol>
 
-    <p class="controls-note">PC: 방향키·WASD로 기울이기, Z 되돌리기, R 다시 시작 · 휴대폰: 판 위에서 스와이프하거나, 게임 화면의 [기울기 조작]을 켜고 휴대폰을 직접 기울이세요.</p>
+    <p class="controls-note">PC: 방향키·WASD로 기울이기, Z 되돌리기, R 다시 시작, M 소리 켜기/끄기 · 휴대폰: 판 위에서 스와이프하거나, 게임 화면의 [기울기 조작]을 켜고 휴대폰을 직접 기울이세요.</p>
   </section>
 
   <section class="screen game" id="game" hidden aria-label="게임">
@@ -63,6 +63,9 @@
       </dl>
       <button class="meter" id="meter" type="button" hidden aria-label="지금 각도를 수평 기준으로 다시 잡기" title="눌러서 지금 각도를 수평 기준으로">
         <span class="meter-ring" aria-hidden="true"></span><span class="meter-dot" id="meter-dot" aria-hidden="true"></span>
+      </button>
+      <button class="icon-btn" id="btn-sound" type="button" aria-label="소리 끄기" aria-pressed="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="ico-spk" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="ico-on" d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="ico-off" d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
       </button>
       <button class="icon-btn" id="btn-full" type="button" aria-label="전체 화면" aria-pressed="false" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path class="ico-enter" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><path class="ico-exit" d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>

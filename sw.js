@@ -1,9 +1,9 @@
 // 오프라인 실행용 서비스 워커.
 // 게임 파일: 네트워크 우선(새 버전 즉시 반영) → 실패 시 캐시. 글꼴: 캐시 우선.
-const CACHE = 'tilt-marble-v6';
+const CACHE = 'tilt-marble-v7';
 const SHELL = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
-  'src/main.js', 'src/engine.js', 'src/levels.js', 'src/generator.js', 'src/motion.js', 'src/anim.js',
+  'src/main.js', 'src/engine.js', 'src/levels.js', 'src/generator.js', 'src/motion.js', 'src/anim.js', 'src/sound.js',
   'icons/icon-192.png', 'icons/icon-512.png',
 ];
 
