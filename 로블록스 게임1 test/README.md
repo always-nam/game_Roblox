@@ -24,9 +24,22 @@ pip install lupa
 python3 tests/run.py
 ```
 
+## 자동 게시 (GitHub Actions)
+이 폴더가 바뀌어 push되면 `.github/workflows/roblox-publish.yml`이 테스트 → 빌드 → Roblox 게시를 자동으로 합니다.
+저장소 **Settings → Secrets and variables → Actions**에 아래 3개를 등록해야 게시까지 진행됩니다 (없으면 빌드까지만).
+
+| 종류 | 이름 | 값 |
+|---|---|---|
+| Secret | `ROBLOX_API_KEY` | Creator Hub에서 만든 Open Cloud API 키 (universe-places 쓰기 권한) |
+| Variable | `ROBLOX_UNIVERSE_ID` | 게임의 Universe ID |
+| Variable | `ROBLOX_PLACE_ID` | 게임의 Place ID |
+
+게임 주소: `https://www.roblox.com/games/<ROBLOX_PLACE_ID>`
+
 ## 진행 상태
 - [x] 폴더 생성
 - [x] 퍼즐 규칙 + 맵 생성 스크립트
 - [x] 규칙 자동 테스트
 - [ ] Studio에서 실제 플레이 확인 (남대표님)
-- [ ] Open Cloud 자동 게시 설정 (Universe ID / Place ID / API 키 필요)
+- [x] 자동 게시 워크플로 작성
+- [ ] 게임 생성 + API 키/ID 등록 (남대표님)

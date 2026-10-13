@@ -1,0 +1,86 @@
+name: roblox-publish
+
+# '로블록스 게임1 test' 폴더가 바뀌어 push되면 퍼즐 규칙 테스트 → Rojo 빌드 → Roblox Open Cloud로 게시합니다.
+# 필요한 설정 (저장소 Settings → Secrets and variables → Actions):
+#   Secret   ROBLOX_API_KEY      : universe-places 쓰기 권한이 있는 Open Cloud API 키
+#   Variable ROBLOX_UNIVERSE_ID  : 게임(Experience)의 Universe ID
+#   Variable ROBLOX_PLACE_ID     : 게시할 Place ID
+# 설정이 없으면 빌드까지만 하고 게시는 건너뜁니다.
+on:
+  push:
+    branches:
+      - claude/focused-maxwell-9eeogr
+      - claude/html5-javascript-puzzle-game-np4u8y
+    paths:
+      - '로블록스 게임1 test/**'
+      - '.github/workflows/roblox-publish.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: roblox-publish
+  cancel-in-progress: false
+
+env:
+  ROJO_VERSION: 7.7.1
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 로블록스 게임1 test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Logic tests
+        run: |
+          pip install lupa
+          python3 tests/run.py
+
+      - name: Cache Rojo
+        id: rojo-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/rojo
+          key: rojo-${{ env.ROJO_VERSION }}-${{ runner.os }}
+
+      - name: Install Rojo
+        if: steps.rojo-cache.outputs.cache-hit != 'true'
+        run: cargo install rojo --version "$ROJO_VERSION" --locked
+
+      - name: Build place file
+        run: rojo build -o LightsOut.rbxl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LightsOut-place
+          path: 로블록스 게임1 test/LightsOut.rbxl
+
+      - name: Publish to Roblox
+        env:
+          ROBLOX_API_KEY: ${{ secrets.ROBLOX_API_KEY }}
+          UNIVERSE_ID: ${{ vars.ROBLOX_UNIVERSE_ID }}
+          PLACE_ID: ${{ vars.ROBLOX_PLACE_ID }}
+        run: |
+          if [ -z "$ROBLOX_API_KEY" ] || [ -z "$UNIVERSE_ID" ] || [ -z "$PLACE_ID" ]; then
+            echo "::notice::ROBLOX_API_KEY / ROBLOX_UNIVERSE_ID / ROBLOX_PLACE_ID 설정이 없어 게시를 건너뜁니다."
+            exit 0
+          fi
+          status=$(curl -sS -o response.json -w '%{http_code}' -X POST \
+            "https://apis.roblox.com/universes/v1/${UNIVERSE_ID}/places/${PLACE_ID}/versions?versionType=Published" \
+            -H "x-api-key: ${ROBLOX_API_KEY}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @LightsOut.rbxl)
+          cat response.json; echo
+          if [ "$status" != "200" ]; then
+            echo "::error::Roblox 게시 실패 (HTTP $status)"
+            exit 1
+          fi
+          echo "::notice::게시 완료: https://www.roblox.com/games/${PLACE_ID}"
