@@ -3,6 +3,7 @@
 //   벽 충돌: 나무를 두드리는 소리, 구멍: '퐁' 하고 떨어지는 소리, 함정: 낮게 떨어지는 소리
 //   성공: 차임 화음, 실패: 내려가는 소리
 // 브라우저는 사용자가 화면을 누르기 전에는 소리를 낼 수 없으므로 첫 탭·키 입력 때 준비한다.
+import { haptic } from './platform.js';
 
 let ctx = null;
 let master = null;
@@ -185,5 +186,5 @@ export function playLose() {
 }
 
 function vibrate(pattern) {
-  try { if (enabled && navigator.vibrate) navigator.vibrate(pattern); } catch { /* 무시 */ }
+  if (enabled) haptic(pattern);
 }

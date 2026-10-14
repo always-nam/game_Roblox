@@ -12,8 +12,8 @@ const pick = (name) => {
 };
 const strip = (src) => src
   .replace(/^import [^;]+;\s*$/gm, '')
-  .replace(/^export (const|function|let)/gm, '$1');
-const files = ['src/engine.js', 'src/levels.js', 'src/generator.js', 'src/motion.js', 'src/anim.js', 'src/sound.js', 'src/music.js', 'src/story.js', 'src/scenery.js', 'src/title.js', 'src/main.js']
+  .replace(/^export (const|function|let|async function)/gm, '$1');
+const files = ['src/platform.js', 'src/engine.js', 'src/levels.js', 'src/workshop.js', 'src/generator.js', 'src/motion.js', 'src/anim.js', 'src/sound.js', 'src/music.js', 'src/story.js', 'src/scenery.js', 'src/title.js', 'src/main.js']
 const js = files
   .map((f) => `// ---- ${f} ----\n${strip(readFileSync(f, 'utf8'))}`)
   .join('\n');

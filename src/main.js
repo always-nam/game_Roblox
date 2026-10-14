@@ -7,6 +7,8 @@ import { playMusic, setMusicEnabled, musicEnabled, musicInfo } from './music.js'
 import { createTitleDemo } from './title.js';
 import { generatePuzzle, dateSeed } from './generator.js';
 import { createTiltDetector, SENSITIVITY, createFlowGate } from './motion.js';
+import { WORKSHOP, WORKSHOP_BOX } from './workshop.js';
+import { store, showRewardedAd, onBackButton, useServiceWorker } from './platform.js';
 import { rollKeyframes, rollDuration } from './anim.js';
 import {
   unlockAudio, setSoundEnabled, soundEnabled, soundStats,
@@ -34,7 +36,7 @@ function migrateBest(data) {
 }
 function loadProgress() {
   try {
-    const raw = localStorage.getItem(STORE_KEY);
+    const raw = store.get(STORE_KEY);
     const data = raw ? JSON.parse(raw) : {};
     return { v: 2, best: migrateBest(data),  daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full, sens: SENSITIVITY[data.sens] ? data.sens : 'normal', origin: data.origin || null, sound: data.sound !== false, music: data.music !== false, seen: data.seen || {} };
   } catch {
@@ -42,7 +44,7 @@ function loadProgress() {
   }
 }
 function saveProgress() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(progress)); } catch { /* 저장 불가 환경 */ }
+  store.set(STORE_KEY, JSON.stringify(progress));   // 저장이 막힌 환경이면 조용히 실패
 }
 const progress = loadProgress();
 
@@ -101,6 +103,83 @@ function nextLevelIndex() {
   for (let i = 0; i < LEVELS.length; i++) if (!clearedAt(i) && isOpen(i)) return i;
   return LEVELS.length - 1;
 }
+
+// ---------- 공방 모드(1000단계) ----------
+// 이야기 모드와 같은 기록(progress.best)에 단계 id(W1~W1000)로 저장한다. 열림 규칙도 같다.
+const SCENES = ['attic', 'summer', 'autumn', 'winter'];
+const WS_BOXES = WORKSHOP.length / WORKSHOP_BOX;
+const wsCleared = (i) => progress.best[WORKSHOP[i].id] != null;
+const wsOpen = (i) => i === 0 || wsCleared(i) || wsCleared(i - 1);
+function wsNext() {
+  for (let i = 0; i < WORKSHOP.length; i++) if (!wsCleared(i) && wsOpen(i)) return i;
+  return WORKSHOP.length - 1;
+}
+function wsDef(i) {
+  const lv = WORKSHOP[i];
+  const box = Math.floor(i / WORKSHOP_BOX);
+  return {
+    key: lv.id, ws: i, box, scene: SCENES[box % SCENES.length],
+    label: `공방 ${i + 1}단계`, name: `${box + 1}번 상자 · ${(i % WORKSHOP_BOX) + 1}번째 판`,
+    hint: '', par: lv.par, rows: lv.rows,
+  };
+}
+const wsView = { box: null };
+function renderWorkshop() {
+  const next = wsNext();
+  if (wsView.box == null) wsView.box = Math.floor(next / WORKSHOP_BOX);
+  const boxes = $('#ws-boxes');
+  boxes.textContent = '';
+  let total = 0;
+  for (let b = 0; b < WS_BOXES; b++) {
+    let cleared = 0;
+    for (let i = b * WORKSHOP_BOX; i < (b + 1) * WORKSHOP_BOX; i++) {
+      const best = progress.best[WORKSHOP[i].id];
+      if (best != null) { cleared++; total += starsFor(best, WORKSHOP[i].par); }
+    }
+    const open = wsOpen(b * WORKSHOP_BOX);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ws-box' + (b === wsView.box ? ' on' : '') + (cleared === WORKSHOP_BOX ? ' done' : '');
+    btn.disabled = !open;
+    btn.dataset.box = String(b);
+    btn.setAttribute('aria-pressed', String(b === wsView.box));
+    btn.setAttribute('aria-label', `${b + 1}번 상자${open ? `, ${cleared}/${WORKSHOP_BOX}판 완료` : ' (잠김)'}`);
+    btn.innerHTML = `<span class="n">${b + 1}</span><span class="bar"><i style="width:${(cleared / WORKSHOP_BOX) * 100}%"></i></span>`;
+    btn.addEventListener('click', () => { wsView.box = b; renderWorkshop(); });
+    boxes.append(btn);
+  }
+  const b = wsView.box;
+  const first = b * WORKSHOP_BOX;
+  const grid = $('#ws-grid');
+  grid.textContent = '';
+  let cleared = 0;
+  for (let i = first; i < first + WORKSHOP_BOX; i++) {
+    const lv = WORKSHOP[i];
+    const best = progress.best[lv.id];
+    const stars = best != null ? starsFor(best, lv.par) : 0;
+    if (best != null) cleared++;
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'level-btn' + (i === next && best == null ? ' current' : '');
+    btn.disabled = !wsOpen(i);
+    btn.dataset.ws = String(i);
+    btn.setAttribute('aria-label', `공방 ${i + 1}단계${btn.disabled ? ' (잠김)' : best != null ? `, 별 ${stars}개` : ''}`);
+    btn.innerHTML = `<span class="n">${i + 1}</span><span class="s">${best != null ? [1, 2, 3].map((k) => `<i class="${k <= stars ? 'on' : ''}">●</i>`).join('') : ''}</span>`;
+    btn.addEventListener('click', () => startLevel(wsDef(i)));
+    li.append(btn);
+    grid.append(li);
+  }
+  $('#ws-box-title').textContent = `${b + 1}번 상자`;
+  $('#ws-box-meta').textContent = `${cleared}/${WORKSHOP_BOX}판 · 최소 ${WORKSHOP[first].par}~${Math.max(...WORKSHOP.slice(first, first + WORKSHOP_BOX).map((l) => l.par))}수`;
+  $('#ws-stars').textContent = `★ ${total} / ${WORKSHOP.length * 3}`;
+  setScene($('#scenery'), SCENES[b % SCENES.length]);
+  boxes.querySelector('.ws-box.on')?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
+}
+$('#btn-workshop').addEventListener('click', () => { wsView.box = null; showScreen('workshop'); });
+$('#btn-ws-back').addEventListener('click', () => showScreen('menu'));
+/** 게임을 마치고 돌아갈 목록 화면 */
+const listScreen = () => (game.def?.ws != null ? 'workshop' : 'menu');
 
 // ---------- 메뉴 ----------
 function renderMenu() {
@@ -171,6 +250,8 @@ function renderMenu() {
   const d = getDaily();
   const dBest = progress.daily[d.seed];
   $('#daily-label').textContent = dBest != null ? `완료 ${dBest}수` : `최소 ${d.par}수`;
+  const wsDone = WORKSHOP.filter((l) => progress.best[l.id] != null).length;
+  $('#ws-label').textContent = `${wsDone} / ${WORKSHOP.length}`;
   // 이어서 할 장으로 넘겨 두고, 그 장의 배경을 보여 준다
   const focus = chapterOf(next);
   const card = box.children[focus];
@@ -203,12 +284,14 @@ $('#chapters').addEventListener('scroll', () => {
 function showScreen(name) {
   $('#title').hidden = name !== 'title';
   $('#menu').hidden = name !== 'menu';
+  $('#workshop').hidden = name !== 'workshop';
   $('#game').hidden = name !== 'game';
   if (name === 'title') startTitle(); else stopTitle();
   if (name === 'menu') { renderMenu(); playMusic('title'); }
+  else if (name === 'workshop') { renderWorkshop(); playMusic('title'); }
   else if (name === 'game') {
     layoutBoard();
-    playMusic(game.def?.chapter != null ? CHAPTERS[game.def.chapter].scene : 'attic');
+    playMusic(game.def?.scene ?? (game.def?.chapter != null ? CHAPTERS[game.def.chapter].scene : 'attic'));
   }
 }
 
@@ -267,7 +350,7 @@ function startLevel(def, { skipStory = false } = {}) {
     playStory(chap, chap.intro, () => { markSeen(`intro-${def.chapter}`); startLevel(def, { skipStory: true }); });
     return;
   }
-  setScene($('#scenery'), def.chapter != null ? CHAPTERS[def.chapter].scene : CHAPTERS[0].scene);
+  setScene($('#scenery'), def.scene ?? (def.chapter != null ? CHAPTERS[def.chapter].scene : CHAPTERS[0].scene));
   const { level, state } = parseLevel(def.rows);
   Object.assign(game, { def, level, initial: state, state: cloneState(state), history: [], moves: 0, animating: false, queued: null, ended: false });
   if (def.index != null) { progress.last = def.index; saveProgress(); }
@@ -485,7 +568,8 @@ function finish(st) {
       saveProgress();
     }
     const actions = [];
-    const chapterEnd = !isDaily && stageInChapter(def.index) === CHAPTER_SIZE - 1;
+    const isWs = def.ws != null;
+    const chapterEnd = def.index != null && stageInChapter(def.index) === CHAPTER_SIZE - 1;
     if (chapterEnd) {
       // 장의 마지막 단계: 할아버지 편지 → (마지막 장이면 결말) → 다음 장
       const chap = CHAPTERS[def.chapter];
@@ -499,11 +583,15 @@ function finish(st) {
           else startLevel(levelDef(def.index + 1));
         }, isLast ? '처음 화면으로' : '다음 장으로');
       }]);
-    } else if (!isDaily && def.index < LEVELS.length - 1) actions.push(['다음 단계', 'btn-primary', () => startLevel(levelDef(def.index + 1))]);
+    } else if (isWs && def.ws < WORKSHOP.length - 1) actions.push(['다음 단계', 'btn-primary', () => startLevel(wsDef(def.ws + 1))]);
+    else if (def.index != null && def.index < LEVELS.length - 1) actions.push(['다음 단계', 'btn-primary', () => startLevel(levelDef(def.index + 1))]);
     actions.push(['다시 하기', '', restart]);
-    actions.push(['단계 목록', '', () => { hideOverlay(); showScreen('menu'); }]);
+    actions.push(['단계 목록', '', () => { hideOverlay(); showScreen(listScreen()); }]);
     const record = prev != null && game.moves < prev ? ' · 새 기록' : '';
-    const msg = !isDaily && def.index === LEVELS.length - 1
+    const boxEnd = isWs && (def.ws + 1) % WORKSHOP_BOX === 0;
+    const msg = isWs && def.ws === WORKSHOP.length - 1 ? `공방의 1000판을 모두 풀었습니다! ${game.moves}수 · 최소 ${def.par}수${record}`
+      : boxEnd ? `${def.box + 1}번 상자 완성! ${game.moves}수 · 최소 ${def.par}수${record}`
+      : def.index === LEVELS.length - 1
       ? `${game.moves}수 만에 할아버지의 마지막 판을 풀었습니다. 최소 ${def.par}수${record}`
       : `${game.moves}수 만에 성공 · 최소 ${def.par}수${record}`;
     playWin(stars);
@@ -556,7 +644,7 @@ document.addEventListener('keydown', (e) => {
   if (dir && $('#overlay').hidden) { e.preventDefault(); doTilt(dir); return; }
   if (e.key === 'z' || e.key === 'Z' || e.key === 'u' || e.key === 'Backspace') { e.preventDefault(); undo(); }
   else if (e.key === 'r' || e.key === 'R') { e.preventDefault(); restart(); }
-  else if (e.key === 'Escape') { hideOverlay(); showScreen('menu'); }
+  else if (e.key === 'Escape') { hideOverlay(); showScreen(listScreen()); }
 });
 
 // 스와이프: 판 영역에서 손가락/마우스를 끌어서 놓으면 그 방향으로 기울인다
@@ -579,7 +667,8 @@ area.addEventListener('pointercancel', () => { swipe = null; });
 document.querySelectorAll('.pad').forEach((b) => b.addEventListener('click', () => doTilt(b.dataset.dir)));
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-restart').addEventListener('click', restart);
-$('#btn-hint').addEventListener('click', () => showGuide(true));
+// 힌트: 앱에서는 보상형 광고를 본 뒤 보여 준다(광고 단위가 없거나 웹이면 바로 보여 줌 — platform.js)
+$('#btn-hint').addEventListener('click', async () => { if (await showRewardedAd('hint')) showGuide(true); });
 
 // ---------- 길잡이(다음에 기울일 방향 화살표) ----------
 // 연습 단계(guide)에서는 늘, 다른 단계에서는 [힌트]를 누르면 풀이기가 찾은 다음 방향을 화살표로 보여 준다.
@@ -614,7 +703,7 @@ function showGuide(fromButton) {
   if (!fromButton && game.moves === 0 && game.def.hint) return;
   flashHint(`${how} (남은 최소 ${r.moves.length}수)`);
 }
-$('#btn-menu').addEventListener('click', () => { hideOverlay(); showScreen('menu'); });
+$('#btn-menu').addEventListener('click', () => { hideOverlay(); showScreen(listScreen()); });
 $('#btn-daily').addEventListener('click', () => startLevel(getDaily()));
 window.addEventListener('resize', () => { layoutBoard(); titleDemo.layout(); });
 if (window.ResizeObserver) new ResizeObserver(layoutBoard).observe(area);
@@ -916,6 +1005,7 @@ window.__tilt = {
   demo: () => ({ running: titleDemo.running, steps: titleDemo.steps }),
   info: () => ({ reducedMotion, key: game.def?.key, moves: game.moves, status: game.state ? status(game.state) : null, animating: game.animating, par: game.def?.par }),
   rows: () => game.def?.rows,
+  ws: () => ({ count: WORKSHOP.length, box: wsView.box, next: wsNext() }),
   guide: () => ({ visible: !$('#guide').hidden, dir: game.guideDir }),
   story: () => ({ open: !$('#story').hidden, i: story.i, n: story.lines.length }),
 };
@@ -923,6 +1013,17 @@ window.__tilt = {
 showScreen(window.__TILT_SKIP_TITLE ? 'menu' : 'title');
 
 // 앱 설치(PWA)·오프라인 실행: 매니페스트가 있는 정식 페이지에서만 서비스 워커를 등록한다
-if ('serviceWorker' in navigator && document.querySelector('link[rel="manifest"]')) {
+// 안드로이드 앱의 뒤로가기 버튼: 열린 창 닫기 → 게임에서 목록으로 → 목록에서 시작 화면으로 → (시작 화면이면) 앱 닫기
+onBackButton(() => {
+  if (!$('#story').hidden) { endStory(); return true; }
+  if (!$('#howto').hidden) { $('#howto').hidden = true; return true; }
+  if (!$('#overlay').hidden) { hideOverlay(); showScreen(listScreen()); return true; }
+  if (!$('#game').hidden) { showScreen(listScreen()); return true; }
+  if (!$('#workshop').hidden) { showScreen('menu'); return true; }
+  if (!$('#menu').hidden) { showScreen('title'); return true; }
+  return false;
+});
+
+if (useServiceWorker() && document.querySelector('link[rel="manifest"]')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }

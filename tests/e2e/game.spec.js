@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { parseLevel, solve } from '../../src/engine.js';
 import { eulerToMatrix, matrixToEuler, mul, axisRotation } from '../../src/motion.js';
 import { LEVELS } from '../../src/levels.js';
+import { WORKSHOP, WORKSHOP_BOX } from '../../src/workshop.js';
 
 const solutionFor = (rows) => {
   const { level, state } = parseLevel(rows);
@@ -707,4 +708,79 @@ test('이전 버전 기록(단계 번호)은 새 단계 id로 옮겨진다', asy
   }
   await expect(page.locator('#star-total')).not.toHaveText('★ 0 / 144');
   await expect(page.locator('.level-btn').first()).toBeEnabled();   // 새 연습 단계도 바로 할 수 있다
+});
+
+// ---------- 공방 1000단계 ----------
+// 사람이 1000판을 다 해 볼 수 없으므로, 판 자체는 단위 테스트가 풀이기로 전부 검증하고
+// 여기서는 '실제 화면에서 로봇이 손가락 대신 키를 눌러' 상자마다 판을 골라 풀어 본다.
+const wsBest = (n, moves = 99) => Object.fromEntries(WORKSHOP.slice(0, n).map((l) => [l.id, moves]));
+async function openWs(page, i) {
+  await page.evaluate((best) => localStorage.setItem('tilt-marble-v1', JSON.stringify({ v: 2, best })), wsBest(i));
+  await page.reload();
+  await page.locator('#btn-workshop').click();
+  await expect(page.locator('#workshop')).toBeVisible();
+  const box = Math.floor(i / WORKSHOP_BOX);
+  await page.locator(`.ws-box[data-box="${box}"]`).click();
+  await page.locator(`#ws-grid .level-btn[data-ws="${i}"]`).click();
+  await expect(page.locator('#hud-num')).toHaveText(`공방 ${i + 1}단계`);
+}
+async function playSolution(page, i) {
+  for (const d of WORKSHOP[i].solution) {
+    await page.keyboard.press(KEYS[d]);
+    await waitIdle(page);
+  }
+}
+
+test('공방: 처음엔 1번 상자의 첫 판만 열려 있고, 풀면 다음 판이 열린다', async ({ page }) => {
+  await expect(page.locator('#ws-label')).toHaveText('0 / 1000');
+  await page.locator('#btn-workshop').click();
+  await expect(page.locator('.ws-box')).toHaveCount(20);
+  await expect(page.locator('.ws-box[data-box="0"]')).toBeEnabled();
+  await expect(page.locator('.ws-box[data-box="1"]')).toBeDisabled();
+  await expect(page.locator('#ws-grid .level-btn')).toHaveCount(50);
+  await expect(page.locator('#ws-grid .level-btn').nth(0)).toBeEnabled();
+  await expect(page.locator('#ws-grid .level-btn').nth(1)).toBeDisabled();
+  await page.locator('#ws-grid .level-btn').nth(0).click();
+  await playSolution(page, 0);
+  await expect(page.locator('#dlg-stars span.on')).toHaveCount(3);
+  await page.getByRole('button', { name: '다음 단계' }).click();
+  await expect(page.locator('#hud-num')).toHaveText('공방 2단계');
+  await page.locator('#btn-menu').click();                     // 공방 게임에서 나가면 공방 목록으로
+  await expect(page.locator('#workshop')).toBeVisible();
+  await expect(page.locator('#ws-grid .level-btn').nth(1)).toBeEnabled();
+  await expect(page.locator('#ws-stars')).toHaveText('★ 3 / 3000');
+});
+
+test('공방: 50판을 다 풀어야 다음 상자가 열리고, 상자의 마지막 판을 풀면 상자 완성', async ({ page }) => {
+  await page.addInitScript(() => { window.__TILT_FAST = true; });
+  await openWs(page, 49);
+  await expect(page.locator('#hud-name')).toHaveText('1번 상자 · 50번째 판');
+  await playSolution(page, 49);
+  await expect(page.locator('#dlg-text')).toContainText('1번 상자 완성');
+  await page.getByRole('button', { name: '단계 목록', exact: true }).click();
+  await expect(page.locator('.ws-box[data-box="1"]')).toBeEnabled();
+  await expect(page.locator('.ws-box[data-box="2"]')).toBeDisabled();
+});
+
+test('[1000단계 표본] 상자마다 첫 판·마지막 판을 실제 화면에서 최소 수로 풀어 본다', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop', '표본 풀기는 PC 한 곳에서만(판 검증은 단위 테스트가 1000판 전부 함)');
+  test.setTimeout(240_000);
+  await page.addInitScript(() => { window.__TILT_FAST = true; });
+  const sample = [];
+  for (let b = 0; b < 20; b++) sample.push(b * WORKSHOP_BOX, b * WORKSHOP_BOX + WORKSHOP_BOX - 1);
+  for (const i of sample) {
+    await openWs(page, i);
+    await playSolution(page, i);
+    await expect(page.locator('#overlay'), `공방 ${i + 1}단계`).toBeVisible();
+    await expect(page.locator('#dlg-stars span.on'), `공방 ${i + 1}단계 별`).toHaveCount(3);
+    await expect(page.locator('#hud-moves')).toHaveText(String(WORKSHOP[i].par));
+  }
+});
+
+test('앱 대비: 웹에서는 광고 없이 힌트가 바로 나오고 앱 전용 기능은 꺼져 있다', async ({ page }) => {
+  await page.locator('#btn-workshop').click();
+  await page.locator('#ws-grid .level-btn').nth(0).click();
+  await page.locator('#btn-hint').click();
+  await expect(page.locator('#guide')).toBeVisible();
+  expect(await page.evaluate(() => !!window.Capacitor)).toBe(false);
 });

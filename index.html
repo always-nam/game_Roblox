@@ -54,12 +54,29 @@
 
     <div class="menu-actions">
       <button class="btn btn-primary" id="btn-continue" type="button">이어서 하기</button>
+      <button class="btn btn-workshop" id="btn-workshop" type="button">공방 1000단계 <small id="ws-label"></small></button>
       <button class="btn" id="btn-daily" type="button">오늘의 퍼즐 <small id="daily-label"></small></button>
       <button class="btn" id="btn-howto" type="button">놀이 방법</button>
     </div>
 
     <div class="chapters" id="chapters"></div>
     <div class="chapter-dots" id="chapter-dots" aria-hidden="true"></div>
+  </section>
+
+  <section class="screen workshop" id="workshop" aria-labelledby="ws-title" hidden>
+    <header class="menu-bar">
+      <button class="icon-btn" id="btn-ws-back" type="button" aria-label="이야기 모드로">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <h1 id="ws-title" class="menu-logo">할아버지의 <span>공방</span></h1>
+      <span id="ws-stars" class="star-total"></span>
+    </header>
+    <p class="ws-intro">구슬 상자 20개, 상자마다 50판. 앞 판을 풀면 다음 판이 열려요.</p>
+    <div class="ws-boxes" id="ws-boxes" role="group" aria-label="구슬 상자"></div>
+    <div class="ws-panel">
+      <header class="ws-head"><h2 id="ws-box-title"></h2><p id="ws-box-meta"></p></header>
+      <ol class="level-grid ws-grid" id="ws-grid"></ol>
+    </div>
   </section>
 
   <section class="screen game" id="game" hidden aria-label="게임">
