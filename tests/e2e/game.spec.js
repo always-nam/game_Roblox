@@ -8,6 +8,16 @@ const solutionFor = (rows) => {
   return solve(level, state, { maxDepth: 40, maxNodes: 500000 }).moves;
 };
 const KEYS = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' };
+// 저장 기록(v2: 단계 id로 기록)을 만들어 앞의 n단계를 깬 상태로
+const clearedBest = (n, moves = 50) => Object.fromEntries(LEVELS.slice(0, n).map((l) => [l.id, moves]));
+const idxOf = (id) => LEVELS.findIndex((l) => l.id === id);
+/** 이전 1단계(L1 '첫 기울기': ↓로 벽까지 2칸 → →로 구멍)를 열어 시작한다 */
+async function openL1(page) {
+  const i = idxOf('L1');
+  await page.evaluate((best) => localStorage.setItem('tilt-marble-v1', JSON.stringify({ v: 2, best })), clearedBest(i));
+  await page.reload();
+  await page.locator('.level-btn').nth(i).click();
+}
 
 async function waitIdle(page) {
   await page.waitForFunction(() => !window.__tilt.info().animating);
@@ -20,6 +30,7 @@ test.beforeEach(async ({ page }) => {
     if (!sessionStorage.getItem('story-on')) window.__TILT_SKIP_STORY = true;
     if (!sessionStorage.getItem('title-on')) window.__TILT_SKIP_TITLE = true;   // 시작 화면은 전용 테스트에서만
   });
+  await page.addInitScript((ids) => { window.__LV = ids; }, LEVELS.map((l) => l.id));
   await page.goto('index.html');
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -27,7 +38,7 @@ test.beforeEach(async ({ page }) => {
 
 test('메뉴가 열리고 1단계만 잠금 해제되어 있다', async ({ page }) => {
   await expect(page.locator('#menu-title')).toBeVisible();
-  await expect(page.locator('.level-btn')).toHaveCount(32);
+  await expect(page.locator('.level-btn')).toHaveCount(48);
   await expect(page.locator('.level-btn').first()).toBeEnabled();
   await expect(page.locator('.level-btn').nth(1)).toBeDisabled();
 });
@@ -48,7 +59,7 @@ test('키보드로 1단계를 최소 수로 풀면 별 3개가 나오고 2단계
 });
 
 test('되돌리기와 처음부터가 이동 수를 복원한다', async ({ page }) => {
-  await page.locator('.level-btn').first().click();
+  await openL1(page);
   await page.keyboard.press('ArrowDown');
   await waitIdle(page);
   await expect(page.locator('#hud-moves')).toHaveText('1');
@@ -62,9 +73,10 @@ test('되돌리기와 처음부터가 이동 수를 복원한다', async ({ page
 });
 
 test('함정에 빠지면 실패 창이 뜨고 되돌리기로 복구된다', async ({ page }) => {
-  await page.evaluate(() => localStorage.setItem('tilt-marble-v1', JSON.stringify({ best: { 0: 2, 1: 3, 2: 5, 3: 3 } })));
+  const i = idxOf('L5');                                 // '검은 함정': 구슬 바로 아래 함정
+  await page.evaluate((best) => localStorage.setItem('tilt-marble-v1', JSON.stringify({ v: 2, best })), clearedBest(i));
   await page.reload();
-  await page.locator('.level-btn').nth(4).click(); // 5단계: 구슬 바로 아래 함정
+  await page.locator('.level-btn').nth(i).click();
   await page.keyboard.press('ArrowDown');
   await waitIdle(page);
   await expect(page.locator('#overlay')).toBeVisible();
@@ -85,7 +97,7 @@ test('화면의 방향 버튼으로도 풀 수 있다', async ({ page }) => {
 });
 
 test('스와이프(포인터 드래그)로 기울일 수 있다', async ({ page }) => {
-  await page.locator('.level-btn').first().click();
+  await openL1(page);
   const box = await page.locator('#board').boundingBox();
   const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
   const drag = async (dx, dy) => {
@@ -113,19 +125,19 @@ test('오늘의 퍼즐이 열리고 자동 풀이로 완료할 수 있다', asyn
   await expect(page.locator('#daily-label')).toContainText('완료');
 });
 
-test('32단계(4장) 전체를 브라우저에서 순서대로 풀 수 있다', async ({ page }) => {
-  test.setTimeout(240_000);
+test('48단계(4장) 전체를 브라우저에서 순서대로 풀 수 있다', async ({ page }) => {
+  test.setTimeout(360_000);
   await page.addInitScript(() => { window.__TILT_FAST = true; });   // 32단계를 빨리 돌리려고 연출만 생략
   await page.reload();
   await page.locator('#btn-continue').click();
   for (let i = 0; i < LEVELS.length; i++) {
-    await expect(page.locator('#hud-num')).toHaveText(`${Math.floor(i / 8) + 1}장 · ${(i % 8) + 1}단계`);
+    await expect(page.locator('#hud-num')).toHaveText(`${Math.floor(i / 12) + 1}장 · ${(i % 12) + 1}단계`);
     for (const d of solutionFor(LEVELS[i].rows)) {
       await page.keyboard.press(KEYS[d]);
       await waitIdle(page);
     }
     await expect(page.locator('#overlay')).toBeVisible();
-    if (i % 8 === 7) {
+    if (i % 12 === 11) {
       await page.locator('#dlg-actions .btn-primary').click();      // 할아버지 편지
       await expect(page.locator('#letter')).toBeVisible();
       while (await page.locator('#story').isVisible()) await page.locator('#story-next').click();
@@ -134,12 +146,12 @@ test('32단계(4장) 전체를 브라우저에서 순서대로 풀 수 있다', 
     }
   }
   await expect(page.locator('#menu')).toBeVisible();
-  await expect(page.locator('#star-total')).toHaveText('★ 96 / 96');
+  await expect(page.locator('#star-total')).toHaveText('★ 144 / 144');
 });
 
 test('가로 스크롤이 없고 판이 화면 안에 들어온다', async ({ page }) => {
   for (const idx of [0, 15]) {
-    await page.evaluate((best) => localStorage.setItem('tilt-marble-v1', JSON.stringify({ best })), Object.fromEntries([...Array(16)].map((_, i) => [i, 99])));
+    await page.evaluate((data) => localStorage.setItem('tilt-marble-v1', JSON.stringify(data)), { v: 2, best: clearedBest(LEVELS.length, 99) });
     await page.reload();
     await page.locator('.level-btn').nth(idx).click();
     const vw = page.viewportSize().width, vh = page.viewportSize().height;
@@ -195,8 +207,8 @@ async function orient(page, gamma, beta, alpha = 0) {
     window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: a, beta: b, gamma: g }));
   }, [gamma, beta, alpha]);
 }
-async function startMotion(page, level = 0) {
-  await page.locator('.level-btn').nth(level).click();
+async function startMotion(page) {
+  await openL1(page);
   await page.locator('#btn-motion').click();
   await expect(page.locator('#btn-motion')).toHaveAttribute('aria-pressed', 'true');
 }
@@ -398,7 +410,7 @@ test('넓은 화면에서는 판이 왼쪽, 조작부가 오른쪽에 놓인다'
 });
 
 test('[요청] 구슬이 실제 공처럼 천천히 굴러간다: 점점 빨라지고, 무늬가 돌고, 벽에서 튕긴다', async ({ page }) => {
-  await page.locator('.level-btn').first().click();
+  await openL1(page);
   await page.keyboard.press('ArrowDown');            // 1단계: 구슬이 2칸 굴러가 벽에 멈춘다
   const info = await page.evaluate(() => {
     const piece = document.querySelector('.piece.marble');
@@ -451,7 +463,7 @@ test('저장된 원점은 새로고침 뒤에도 유지된다', async ({ page, i
 
 // ---------- 소리 ----------
 test('[요청] 굴러가는 소리·벽 소리·구멍 소리·성공 소리가 난다', async ({ page }) => {
-  await page.locator('.level-btn').first().click();
+  await openL1(page);
   await page.keyboard.press('ArrowDown');
   await waitIdle(page);
   let s = await page.evaluate(() => window.__tilt.sound());
@@ -508,12 +520,12 @@ test('[스토리] 처음 시작하면 1장 이야기가 나오고, 끝까지 넘
 test('[스토리] 장의 마지막 단계를 풀면 할아버지 편지 → 다음 장 이야기 → 다음 장 배경으로 이어진다', async ({ page }) => {
   await storyOn(page);
   await page.evaluate(() => localStorage.setItem('tilt-marble-v1', JSON.stringify({
-    best: Object.fromEntries([...Array(7)].map((_, i) => [i, 50])), seen: { 'intro-0': true },
+    v: 2, best: Object.fromEntries(window.__LV.slice(0, 11).map((id) => [id, 50])), seen: { 'intro-0': true },
   })));
   await page.reload();
   await page.evaluate(() => { window.__TILT_FAST = true; });
-  await page.locator('.level-btn').nth(7).click();
-  for (const d of solutionFor(LEVELS[7].rows)) { await page.keyboard.press(KEYS[d]); await waitIdle(page); }
+  await page.locator('.level-btn').nth(11).click();
+  for (const d of solutionFor(LEVELS[11].rows)) { await page.keyboard.press(KEYS[d]); await waitIdle(page); }
   await page.getByRole('button', { name: '할아버지의 편지 읽기' }).click();
   await expect(page.locator('#letter-title')).toHaveText('첫 번째 편지');
   await expect(page.locator('#letter-body')).toContainText('대청마루');
@@ -528,7 +540,7 @@ test('[스토리] 앞 장을 마치지 않으면 다음 장은 잠겨 있고, �
   await storyOn(page);
   await expect(page.locator('.chapter').nth(0)).not.toHaveClass(/locked/);
   await expect(page.locator('.chapter').nth(1)).toHaveClass(/locked/);
-  await expect(page.locator('.level-btn').nth(8)).toBeDisabled();
+  await expect(page.locator('.level-btn').nth(12)).toBeDisabled();
   await page.locator('.chapter').nth(0).getByRole('button', { name: '이야기 다시 보기' }).click();
   await expect(page.locator('#story')).toBeVisible();
   await page.keyboard.press('Escape');
@@ -537,10 +549,10 @@ test('[스토리] 앞 장을 마치지 않으면 다음 장은 잠겨 있고, �
 
 test('[스토리] 4장에는 색깔 문이 그려지고 겨울 공방 배경이 나온다', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('tilt-marble-v1', JSON.stringify({
-    best: Object.fromEntries([...Array(24)].map((_, i) => [i, 50])),
+    v: 2, best: Object.fromEntries(window.__LV.slice(0, 36).map((id) => [id, 50])),
   })));
   await page.reload();
-  await page.locator('.level-btn').nth(24).click();
+  await page.locator('.level-btn').nth(36).click();
   await expect(page.locator('#hud-num')).toHaveText('4장 · 1단계');
   await expect(page.locator('.cell.gate')).toHaveCount(1);
   expect(await page.evaluate(() => document.documentElement.dataset.scene)).toBe('winter');
@@ -588,11 +600,11 @@ test('[음악] 화면을 누르면 음악이 시작되고, 장소에 따라 곡�
   expect(m.playing).toBe(true);
   expect(m.notes).toBeGreaterThan(0);
   await page.evaluate(() => localStorage.setItem('tilt-marble-v1', JSON.stringify({
-    best: Object.fromEntries([...Array(16)].map((_, i) => [i, 50])), seen: { 'intro-2': true },
+    v: 2, best: Object.fromEntries(window.__LV.slice(0, 24).map((id) => [id, 50])), seen: { 'intro-2': true },
   })));
   await page.evaluate(() => sessionStorage.removeItem('title-on'));
   await page.reload();
-  await page.locator('.level-btn').nth(16).click();
+  await page.locator('.level-btn').nth(24).click();
   await page.waitForTimeout(600);
   m = await page.evaluate(() => window.__tilt.music());
   expect(m.track).toBe('autumn');
@@ -618,7 +630,7 @@ test('[S26 사례] 기기의 \'움직임 줄이기\'가 켜져 있어도 구슬�
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.reload();
   expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
-  await page.locator('.level-btn').first().click();
+  await openL1(page);
   await page.keyboard.press('ArrowDown');            // 1단계: 구슬이 1칸 → 3칸으로 굴러간다
   // 화면 갱신 속도(테스트 기계 부하)와 무관하게, 굴러가기 애니메이션을 25·50·75% 지점에 멈춰 위치를 잰다
   const info = await page.evaluate(() => {
@@ -642,4 +654,57 @@ test('[S26 사례] 기기의 \'움직임 줄이기\'가 켜져 있어도 구슬�
   expect(info.at[2] - info.at[1]).toBeGreaterThan(info.at[1] - info.at[0]);   // 가속(등가속 구르기)
   await waitIdle(page);
   await expect(page.locator('#hud-moves')).toHaveText('1');
+});
+
+// ---------- 쉬운 시작 · 길잡이 · 힌트 ----------
+test('[요청] 첫 연습 단계는 한 번만 기울이면 되고, 길잡이 화살표가 방향을 알려 준다', async ({ page }) => {
+  await page.locator('.level-btn').first().click();
+  await expect(page.locator('#hud-name')).toHaveText('아래로 기울이기');
+  await expect(page.locator('#guide')).toBeVisible();
+  expect((await page.evaluate(() => window.__tilt.guide())).dir).toBe('down');
+  await expect(page.locator('#hint')).toContainText('몸 쪽으로');
+  await page.keyboard.press('ArrowDown');
+  await waitIdle(page);
+  await expect(page.locator('#dlg-title')).toHaveText('완벽해요!');
+});
+
+test('길잡이는 움직일 때마다 다음 방향으로 바뀐다', async ({ page }) => {
+  await page.evaluate((best) => localStorage.setItem('tilt-marble-v1', JSON.stringify({ v: 2, best })), clearedBest(2));
+  await page.reload();
+  await page.locator('.level-btn').nth(2).click();           // '두 번 기울이기'
+  const first = (await page.evaluate(() => window.__tilt.guide())).dir;
+  await page.keyboard.press(KEYS[first]);
+  await waitIdle(page);
+  const second = await page.evaluate(() => window.__tilt.guide());
+  expect(second.visible).toBe(true);
+  expect(second.dir).not.toBe(first);
+  await page.keyboard.press(KEYS[second.dir]);
+  await waitIdle(page);
+  await expect(page.locator('#overlay')).toBeVisible();
+});
+
+test('[요청] 어려운 단계에서는 [힌트]를 누르면 다음 방향을 알려 준다', async ({ page }) => {
+  await openL1(page);
+  await expect(page.locator('#guide')).toBeHidden();         // 연습 단계가 아니면 자동으로는 안 보임
+  await page.locator('#btn-hint').click();
+  const g = await page.evaluate(() => window.__tilt.guide());
+  expect(g.visible).toBe(true);
+  expect(solutionFor(LEVELS[idxOf('L1')].rows)[0]).toBe(g.dir);
+  await expect(page.locator('#hint')).toContainText('남은 최소');
+  await page.keyboard.press(KEYS[g.dir]);
+  await waitIdle(page);
+  await expect(page.locator('#guide')).toBeHidden();         // 움직이면 사라짐
+});
+
+test('이전 버전 기록(단계 번호)은 새 단계 id로 옮겨진다', async ({ page }) => {
+  // 이전 버전에서 1~4단계를 깬 기록
+  await page.evaluate(() => localStorage.setItem('tilt-marble-v1', JSON.stringify({ best: { 0: 2, 1: 3, 2: 5, 3: 3 } })));
+  await page.reload();
+  for (const id of ['L1', 'L2', 'L3', 'L4']) {
+    const b = page.locator('.level-btn').nth(idxOf(id));
+    await expect(b).toBeEnabled();
+    await expect(b.locator('.s i')).toHaveCount(3);          // 별 표시 = 기록 있음
+  }
+  await expect(page.locator('#star-total')).not.toHaveText('★ 0 / 144');
+  await expect(page.locator('.level-btn').first()).toBeEnabled();   // 새 연습 단계도 바로 할 수 있다
 });

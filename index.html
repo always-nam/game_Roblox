@@ -93,9 +93,15 @@
       <div class="frame" id="frame">
         <div class="board" id="board" role="img" aria-label="퍼즐판"></div>
       </div>
+      <div class="guide" id="guide" hidden aria-hidden="true">
+        <svg viewBox="0 0 100 100"><path d="M50 6 L88 48 H63 V94 H37 V48 H12 Z"/></svg>
+      </div>
     </div>
 
-    <p class="hint" id="hint" aria-live="polite"></p>
+    <div class="hint-row">
+      <p class="hint" id="hint" aria-live="polite"></p>
+      <button class="btn btn-hint" id="btn-hint" type="button" aria-label="힌트: 다음에 기울일 방향 보기">힌트</button>
+    </div>
     <p class="debug" id="debug" hidden></p>
 
     <div class="controls">

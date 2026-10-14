@@ -1,5 +1,5 @@
 // 틸트 구슬판 — 화면과 입력 처리
-import { parseLevel, tilt, status, starsFor, cloneState, GATES } from './engine.js';
+import { parseLevel, tilt, status, starsFor, cloneState, GATES, solve } from './engine.js';
 import { LEVELS, CHAPTER_SIZE, chapterOf, stageInChapter } from './levels.js';
 import { CHAPTERS, ENDING, PEOPLE } from './story.js';
 import { setScene, sceneSVG } from './scenery.js';
@@ -23,13 +23,22 @@ const fastAnim = () => !!window.__TILT_FAST;
 const SINK_MS = 320;
 
 // ---------- 저장 (브라우저 저장소가 막혀 있어도 게임은 동작) ----------
+// 기록 옮기기: 이전 버전(v1)은 '단계 번호(0~31)'로, 지금은 단계마다 고정 id로 기록한다.
+// 이전 번호 i의 단계는 지금 id L{i+1}이다(levels.js). 단계를 넣거나 순서를 바꿔도 기록이 유지된다.
+function migrateBest(data) {
+  const best = data.best || {};
+  if (data.v >= 2) return best;
+  const out = {};
+  for (const [k, v] of Object.entries(best)) out[/^\d+$/.test(k) ? `L${Number(k) + 1}` : k] = v;
+  return out;
+}
 function loadProgress() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     const data = raw ? JSON.parse(raw) : {};
-    return { best: data.best || {}, daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full, sens: SENSITIVITY[data.sens] ? data.sens : 'normal', origin: data.origin || null, sound: data.sound !== false, music: data.music !== false, seen: data.seen || {} };
+    return { v: 2, best: migrateBest(data),  daily: data.daily || {}, last: data.last || 0, motion: !!data.motion, full: !!data.full, sens: SENSITIVITY[data.sens] ? data.sens : 'normal', origin: data.origin || null, sound: data.sound !== false, music: data.music !== false, seen: data.seen || {} };
   } catch {
-    return { best: {}, daily: {}, last: 0, motion: false, full: false, sens: 'normal', origin: null, sound: true, music: true, seen: {} };
+    return { v: 2, best: {}, daily: {}, last: 0, motion: false, full: false, sens: 'normal', origin: null, sound: true, music: true, seen: {} };
   }
 }
 function saveProgress() {
@@ -74,7 +83,7 @@ function levelDef(index) {
   const lv = LEVELS[index];
   const ch = chapterOf(index);
   return {
-    key: String(index), index, chapter: ch,
+    key: lv.id, index, chapter: ch, guide: !!lv.guide,
     label: `${ch + 1}장 · ${stageInChapter(index) + 1}단계`,
     name: lv.name, hint: lv.hint || '', par: lv.par, rows: lv.rows,
   };
@@ -84,21 +93,24 @@ function bestFor(def) {
   return def.key.startsWith('daily-') ? progress.daily[def.seed ?? def.key.slice(6)] : progress.best[def.key];
 }
 
-function unlockedCount() {
-  let n = 1;
-  while (n < LEVELS.length && progress.best[String(n - 1)] != null) n++;
-  return n;
+// 단계 열림: 첫 단계, 이미 깬 단계, 바로 앞 단계를 깬 단계
+const clearedAt = (i) => progress.best[LEVELS[i].id] != null;
+const isOpen = (i) => i === 0 || clearedAt(i) || clearedAt(i - 1);
+/** 이어서 할 단계: 열려 있지만 아직 안 깬 첫 단계 */
+function nextLevelIndex() {
+  for (let i = 0; i < LEVELS.length; i++) if (!clearedAt(i) && isOpen(i)) return i;
+  return LEVELS.length - 1;
 }
 
 // ---------- 메뉴 ----------
 function renderMenu() {
   const box = $('#chapters');
   box.textContent = '';
-  const unlocked = unlockedCount();
+  const nextIdx = nextLevelIndex();
   let total = 0;
   CHAPTERS.forEach((chap, c) => {
     const first = c * CHAPTER_SIZE;
-    const open = first < unlocked;
+    const open = Array.from({ length: CHAPTER_SIZE }, (_, k) => isOpen(first + k)).some(Boolean);
     let chStars = 0;
     let cleared = 0;
     const sec = document.createElement('section');
@@ -110,15 +122,15 @@ function renderMenu() {
     grid.className = 'level-grid';
     for (let i = first; i < first + CHAPTER_SIZE; i++) {
       const lv = LEVELS[i];
-      const best = progress.best[String(i)];
+      const best = progress.best[lv.id];
       const stars = best != null ? starsFor(best, lv.par) : 0;
       chStars += stars;
       if (best != null) cleared++;
       const li = document.createElement('li');
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'level-btn' + (i === unlocked - 1 && best == null ? ' current' : '');
-      b.disabled = i >= unlocked;
+      b.className = 'level-btn' + (i === nextIdx && best == null ? ' current' : '');
+      b.disabled = !isOpen(i);
       b.dataset.level = String(i);
       b.setAttribute('aria-label', `${chap.no}장 ${stageInChapter(i) + 1}단계 ${lv.name}${b.disabled ? ' (잠김)' : best != null ? `, 별 ${stars}개` : ''}`);
       b.innerHTML = `<span class="n">${stageInChapter(i) + 1}</span><span class="s">${best != null ? [1, 2, 3].map((k) => `<i class="${k <= stars ? 'on' : ''}">●</i>`).join('') : ''}</span>`;
@@ -130,7 +142,7 @@ function renderMenu() {
     const art = document.createElement('div');
     art.className = 'chapter-art';
     art.innerHTML = `${sceneSVG(chap.scene)}<span class="chapter-num">${chap.no}</span>
-      <span class="chapter-progress">${Array.from({ length: CHAPTER_SIZE }, (_, k) => `<i class="${progress.best[String(first + k)] != null ? 'on' : ''}"></i>`).join('')}</span>
+      <span class="chapter-progress">${Array.from({ length: CHAPTER_SIZE }, (_, k) => `<i class="${clearedAt(first + k) ? 'on' : ''}"></i>`).join('')}</span>
       ${open ? '' : '<span class="chapter-lock">앞 장을 마치면 열려요</span>'}`;
     const head = document.createElement('header');
     head.className = 'chapter-head';
@@ -153,8 +165,8 @@ function renderMenu() {
   // 장 점 표시(휴대폰 가로 넘김용)
   $('#chapter-dots').innerHTML = CHAPTERS.map((_, c) => `<i data-c="${c}"></i>`).join('');
   $('#star-total').textContent = `★ ${total} / ${LEVELS.length * 3}`;
-  const next = Math.min(unlocked - 1, LEVELS.length - 1);
-  $('#btn-continue').textContent = progress.best['0'] == null ? '이야기 시작하기' : `이어서 하기 · ${chapterOf(next) + 1}장 ${stageInChapter(next) + 1}단계`;
+  const next = nextIdx;
+  $('#btn-continue').textContent = Object.keys(progress.best).length === 0 ? '이야기 시작하기' : `이어서 하기 · ${chapterOf(next) + 1}장 ${stageInChapter(next) + 1}단계`;
   $('#btn-continue').onclick = () => startLevel(levelDef(next));
   const d = getDaily();
   const dBest = progress.daily[d.seed];
@@ -203,7 +215,7 @@ function showScreen(name) {
 // ---------- 시작 화면(모션 그래픽) ----------
 // 나무 글자 조각이 떨어지고, 구슬 네 개가 굴러와 구멍에 들어가고, 가운데 판은 퍼즐을 스스로 푼다.
 // 배경은 다락방 → 여름 → 가을 → 겨울로 천천히 바뀐다.
-const titleDemo = createTitleDemo({ board: $('#demo-board'), frame: $('#demo-frame'), rows: LEVELS[10].rows });
+const titleDemo = createTitleDemo({ board: $('#demo-board'), frame: $('#demo-frame'), rows: LEVELS.find((l) => l.id === 'L11').rows });   // 시연: '넓은 마당'(10수)
 const SEASONS = ['attic', 'summer', 'autumn', 'winter'];
 let seasonTimer = 0;
 let seasonIdx = 0;
@@ -268,6 +280,7 @@ function startLevel(def, { skipStory = false } = {}) {
   updateHud();
   // 단계 시작은 항상 사용자의 탭에서 일어나므로, 권한이 필요한 전체 화면·센서도 여기서 요청할 수 있다
   if (progress.full && fullscreenSupported() && !fullscreenElement()) enterFullscreen();
+  if (def.guide) showGuide(false); else hideGuide();
   motion.last = null;
   motion.paused = false;
   // 원점은 저장된 것을 그대로 쓴다(단계마다 다시 잡지 않음 — 기운 채 시작해도 원점은 그대로)
@@ -360,6 +373,7 @@ function doTilt(dir, { silent = false } = {}) {
     return false;
   }
   motion.last = dir;
+  hideGuide();
   const before = game.state;
   game.history.push(game.state);
   game.state = r.state;
@@ -425,6 +439,7 @@ function animateMoves(moves, dir, before) {
     game.lastMoveEnd = performance.now();
     const st = status(game.state);
     if (st !== 'playing') return finish(st);
+    if (game.def.guide) showGuide(false);
     if (game.queued) { const q = game.queued; game.queued = null; doTilt(q); }
   }, longest + 20);
 }
@@ -439,6 +454,7 @@ function undo() {
   hideOverlay();
   syncPieces(true);
   updateHud();
+  if (game.def?.guide) showGuide(false); else hideGuide();
 }
 
 function restart() {
@@ -452,6 +468,7 @@ function restart() {
   hideOverlay();
   syncPieces(true);
   updateHud();
+  if (game.def?.guide) showGuide(false); else hideGuide();
 }
 
 // ---------- 결과 ----------
@@ -562,6 +579,41 @@ area.addEventListener('pointercancel', () => { swipe = null; });
 document.querySelectorAll('.pad').forEach((b) => b.addEventListener('click', () => doTilt(b.dataset.dir)));
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-restart').addEventListener('click', restart);
+$('#btn-hint').addEventListener('click', () => showGuide(true));
+
+// ---------- 길잡이(다음에 기울일 방향 화살표) ----------
+// 연습 단계(guide)에서는 늘, 다른 단계에서는 [힌트]를 누르면 풀이기가 찾은 다음 방향을 화살표로 보여 준다.
+const DIR_TEXT = {
+  up: { phone: '화면 윗부분을 앞으로(몸 반대쪽으로) 살짝 기울여', arrow: '↑', key: '↑' },
+  down: { phone: '화면 윗부분을 몸 쪽으로 살짝 당겨', arrow: '↓', key: '↓' },
+  left: { phone: '왼쪽을 살짝 내려', arrow: '←', key: '←' },
+  right: { phone: '오른쪽을 살짝 내려', arrow: '→', key: '→' },
+};
+function hideGuide() {
+  $('#guide').hidden = true;
+  game.guideDir = null;
+}
+function showGuide(fromButton) {
+  if (!game.level || game.ended || game.animating) return;
+  const r = solve(game.level, game.state, { maxDepth: 40, maxNodes: 300000 });
+  if (!r.solvable || !r.moves || !r.moves.length) {
+    hideGuide();
+    if (fromButton) flashHint(r.solvable === false ? '이 상태로는 풀 수 없어요. 되돌리기를 눌러 보세요.' : '힌트를 찾지 못했어요. 되돌리기를 하고 다시 눌러 보세요.');
+    return;
+  }
+  const dir = r.moves[0];
+  const t = DIR_TEXT[dir];
+  const g = $('#guide');
+  g.dataset.dir = dir;
+  g.hidden = false;
+  game.guideDir = dir;
+  const how = motion.on ? `휴대폰 ${t.phone} 보세요.`
+    : navigator.maxTouchPoints > 0 ? `판 위에서 ${t.arrow} 쪽으로 쓸어 보세요.`
+    : `${t.key} 키를 눌러 보세요.`;
+  // 연습 단계를 처음 열었을 때는 그 단계의 설명을 그대로 두고 화살표만 보여 준다
+  if (!fromButton && game.moves === 0 && game.def.hint) return;
+  flashHint(`${how} (남은 최소 ${r.moves.length}수)`);
+}
 $('#btn-menu').addEventListener('click', () => { hideOverlay(); showScreen('menu'); });
 $('#btn-daily').addEventListener('click', () => startLevel(getDaily()));
 window.addEventListener('resize', () => { layoutBoard(); titleDemo.layout(); });
@@ -864,6 +916,7 @@ window.__tilt = {
   demo: () => ({ running: titleDemo.running, steps: titleDemo.steps }),
   info: () => ({ reducedMotion, key: game.def?.key, moves: game.moves, status: game.state ? status(game.state) : null, animating: game.animating, par: game.def?.par }),
   rows: () => game.def?.rows,
+  guide: () => ({ visible: !$('#guide').hidden, dir: game.guideDir }),
   story: () => ({ open: !$('#story').hidden, i: story.i, n: story.lines.length }),
 };
 
